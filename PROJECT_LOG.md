@@ -35,8 +35,8 @@ Full 20-phase list with goals, effort ratings, and risk flags lives on the track
 | Phase | Status | Notes |
 |---|---|---|
 | P0 — Project Setup | **Done, verified** | `tsc -b` clean, dev server renders all 5 dashboard sections (Upload Receipts / Policies / Travel Requests / Claims / Audit Logs), sidebar nav tested by actually clicking and reading back page text, zero console errors. Committed: `a10d207`. |
-| P1 — Local Storage Module | Not started | Next up. OPFS for files, Dexie/IndexedDB for receipts/travelRequests/policies/claims/auditLogs stores. |
-| P2 — P19 | Not started | See tracker for full detail per phase, including the gap-fix text folded into each goal. |
+| P1 — Local Storage Module | **Done, verified** | `src/modules/storage/db.ts` (Dexie, 5 stores) + `src/modules/storage/opfs.ts` (file save/read/hash). Wired into a real `UploadReceiptsPanel`. Verified: uploaded a real file through the actual input, record appeared with a real SHA-256 hash, **reloaded the page and the record survived** (the phase's own done-criterion), read the file back from OPFS byte-for-byte and it matched exactly, cleaned up test data after. Committed: `438bd7a`. |
+| P2 — P19 | Not started | See tracker for full detail per phase, including the gap-fix text folded into each goal. Next up: **P2 — Policy + Travel Request Data** (screens + local records that P8/P9 will read). |
 
 ## The one open risk (inherent, not a planning gap)
 
