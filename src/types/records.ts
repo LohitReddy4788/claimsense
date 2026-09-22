@@ -22,8 +22,16 @@ export interface PolicyRecord {
   policyId: string
   category: string
   limitAmount: number
-  baseCurrency: string
   notes?: string
+}
+
+/** Singleton row (id always "default"). Holds the base currency and the
+ * static local conversion table decided in the gap audit — no live FX API,
+ * a currency missing from `rates` must be treated as unsupported, not guessed. */
+export interface PolicySettingsRecord {
+  id: 'default'
+  baseCurrency: string
+  rates: Record<string, number>
 }
 
 export interface ClaimRecord {
