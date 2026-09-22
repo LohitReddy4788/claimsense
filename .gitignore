@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# On-device model weights — hundreds of MB, not something to commit.
+# public/models is a Windows directory junction to D:\claimsense-assets\models
+# on this machine (C: ran out of space); see PROJECT_LOG.md for how to restore it
+# on a different machine.
+public/models
+
 # Unrelated local tooling caches
 .sf/
 
