@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { db } from '../modules/storage/db'
-import { saveReceiptFile, hashFile } from '../modules/storage/opfs'
-import { generateId } from '../utils/id'
+import { ingestReceipt } from '../agents/ingestion/ingestReceipt'
 import type { ReceiptRecord } from '../types/records'
 
 export function UploadReceiptsPanel() {
@@ -22,20 +21,11 @@ export function UploadReceiptsPanel() {
     setBusy(true)
     setError(null)
     try {
-      const receiptId = generateId('rec')
-      const opfsPath = await saveReceiptFile(receiptId, file)
-      const fileHash = await hashFile(file)
-      const record: ReceiptRecord = {
-        receiptId,
-        fileName: file.name,
-        fileType: file.type || 'unknown',
-        fileSize: file.size,
-        opfsPath,
-        fileHash,
-        status: 'registered',
-        uploadedAt: new Date().toISOString(),
+      const result = await ingestReceipt(file)
+      if (!result.success) {
+        setError(result.reason)
+        return
       }
-      await db.receipts.add(record)
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to store receipt')
@@ -47,7 +37,7 @@ export function UploadReceiptsPanel() {
   return (
     <div>
       <label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300">
-        {busy ? 'Saving…' : 'Choose receipt file'}
+        {busy ? 'Checking…' : 'Choose receipt file'}
         <input
           type="file"
           accept=".pdf,.jpg,.jpeg,.png"
@@ -60,8 +50,15 @@ export function UploadReceiptsPanel() {
           }}
         />
       </label>
+      <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        PDF, JPEG or PNG only, checked by file content (not just the extension), 15MB max.
+      </p>
 
-      {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {error && (
+        <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+          Rejected: {error}
+        </p>
+      )}
 
       <div className="mt-6">
         <p className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
@@ -78,7 +75,8 @@ export function UploadReceiptsPanel() {
                 <div>
                   <p className="font-medium text-neutral-900 dark:text-neutral-100">{r.fileName}</p>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                    {r.receiptId} · {(r.fileSize / 1024).toFixed(1)} KB · hash {r.fileHash.slice(0, 10)}…
+                    {r.receiptId} · {r.fileType} · {(r.fileSize / 1024).toFixed(1)} KB · hash{' '}
+                    {r.fileHash.slice(0, 10)}…
                   </p>
                 </div>
                 <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
