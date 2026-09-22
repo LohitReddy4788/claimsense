@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { SectionPanel } from './components/SectionPanel'
+import { UploadReceiptsPanel } from './components/UploadReceiptsPanel'
 import { SECTIONS, type DashboardSection } from './types/dashboard'
 
 function App() {
@@ -10,7 +11,13 @@ function App() {
   return (
     <div className="flex h-screen w-screen bg-white text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
       <Sidebar active={active} onSelect={setActive} />
-      <SectionPanel meta={meta} />
+      {active === 'upload' ? (
+        <SectionPanel meta={meta}>
+          <UploadReceiptsPanel />
+        </SectionPanel>
+      ) : (
+        <SectionPanel meta={meta} />
+      )}
     </div>
   )
 }
