@@ -96,6 +96,7 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
     duplicateOfClaimId,
     status: needsReview ? 'review' : 'draft',
     createdAt: new Date().toISOString(),
+    approvedAt: null,
   }
 
   await db.claims.add(claim)

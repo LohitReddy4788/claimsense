@@ -28,3 +28,11 @@ db.version(1).stores({
 db.version(2).stores({
   policySettings: 'id',
 })
+
+// v3: claims.createdAt needed to be indexed for ClaimsPanel's
+// orderBy('createdAt') — without it Dexie throws a SchemaError on every
+// refresh(), which was being silently swallowed and made the Claims tab
+// look permanently stuck at 0 even though the underlying data was fine.
+db.version(3).stores({
+  claims: 'claimId, receiptId, status, createdAt',
+})

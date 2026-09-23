@@ -57,6 +57,9 @@ export interface ClaimRecord {
   duplicateOfClaimId: string | null
   status: 'draft' | 'review' | 'approved'
   createdAt: string
+  /** Set only when a human explicitly approves via the Review & Submit
+   * step (Phase 11) — null means still draft/review, never approved. */
+  approvedAt: string | null
 }
 
 export interface AuditLogRecord {
