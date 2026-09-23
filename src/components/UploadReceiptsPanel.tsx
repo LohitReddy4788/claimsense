@@ -2,16 +2,24 @@ import { useEffect, useState } from 'react'
 import { db } from '../modules/storage/db'
 import { ingestReceipt } from '../agents/ingestion/ingestReceipt'
 import { processDocument } from '../modules/document-processing/processDocument'
+import { extractReceipt } from '../agents/extraction/extractReceipt'
 import type { ReceiptRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
+import type { ExtractionResult } from '../types/extraction'
 
 interface PreviewState {
   status: 'processing' | 'ready' | 'failed'
   previewUrl?: string
+  blob?: Blob
   width?: number
   height?: number
   pageCount?: number
   reason?: string
+}
+
+interface ExtractState {
+  status: 'running' | 'done'
+  result?: ExtractionResult
 }
 
 export function UploadReceiptsPanel() {
@@ -19,6 +27,7 @@ export function UploadReceiptsPanel() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({})
+  const [extractions, setExtractions] = useState<Record<string, ExtractState>>({})
 
   async function refresh() {
     const all = await db.receipts.orderBy('uploadedAt').reverse().toArray()
@@ -51,11 +60,18 @@ export function UploadReceiptsPanel() {
       [receiptId]: {
         status: 'ready',
         previewUrl,
+        blob: result.blob,
         width: result.width,
         height: result.height,
         pageCount: result.pageCount,
       },
     }))
+  }
+
+  async function runExtraction(receiptId: string, blob: Blob) {
+    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running' } }))
+    const result = await extractReceipt(blob)
+    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'done', result } }))
   }
 
   async function handleFile(file: File) {
@@ -151,6 +167,53 @@ export function UploadReceiptsPanel() {
                       <p className="text-xs text-red-600 dark:text-red-400">
                         Processing failed: {preview.reason}
                       </p>
+                    )}
+                    {preview?.status === 'ready' && preview.blob && (
+                      <div className="mt-2">
+                        {!extractions[r.receiptId] && (
+                          <button
+                            type="button"
+                            onClick={() => runExtraction(r.receiptId, preview.blob!)}
+                            className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                          >
+                            Extract with on-device AI
+                          </button>
+                        )}
+                        {extractions[r.receiptId]?.status === 'running' && (
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                            Running on-device model… (first run loads ~500MB, can take a while)
+                          </p>
+                        )}
+                        {extractions[r.receiptId]?.status === 'done' &&
+                          (() => {
+                            const res = extractions[r.receiptId].result!
+                            if (!res.success) {
+                              return (
+                                <div className="rounded-md bg-red-50 px-2 py-1.5 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
+                                  <p>Extraction failed ({res.latencyMs.toFixed(0)}ms): {res.reason}</p>
+                                  {res.rawModelOutput && (
+                                    <p className="mt-1 text-neutral-500 dark:text-neutral-400">
+                                      Raw output: {res.rawModelOutput.slice(0, 200)}
+                                    </p>
+                                  )}
+                                </div>
+                              )
+                            }
+                            return (
+                              <div className="rounded-md bg-green-50 px-2 py-1.5 text-xs text-neutral-700 dark:bg-green-950 dark:text-neutral-300">
+                                <p>
+                                  {res.latencyMs.toFixed(0)}ms · confidence {(res.confidence * 100).toFixed(0)}%
+                                </p>
+                                <p>vendor: {res.data.vendor ?? '—'}</p>
+                                <p>
+                                  amount: {res.data.amount ?? '—'} {res.data.currency ?? ''}
+                                </p>
+                                <p>date: {res.data.date ?? '—'}</p>
+                                <p>line items: {res.data.lineItems.length}</p>
+                              </div>
+                            )
+                          })()}
+                      </div>
                     )}
                   </div>
                 </li>
