@@ -5,9 +5,11 @@ import { processDocument } from '../modules/document-processing/processDocument'
 import { extractReceipt } from '../agents/extraction/extractReceipt'
 import { validateExtraction } from '../modules/validation/validateExtraction'
 import { classifyCategory } from '../agents/category/classifyCategory'
+import { reconcileTravel } from '../agents/travel/reconcileTravel'
 import type { ReceiptRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
 import type { ValidatedReceipt } from '../modules/validation/validateExtraction'
+import type { ReconciliationResult } from '../types/reconciliation'
 
 interface PreviewState {
   status: 'processing' | 'ready' | 'failed'
@@ -22,6 +24,8 @@ interface PreviewState {
 interface ExtractState {
   status: 'running_vlm' | 'running_fallback' | 'done'
   validated?: ValidatedReceipt
+  category?: ReturnType<typeof classifyCategory>
+  reconciliation?: ReconciliationResult
 }
 
 export function UploadReceiptsPanel() {
@@ -30,6 +34,7 @@ export function UploadReceiptsPanel() {
   const [error, setError] = useState<string | null>(null)
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({})
   const [extractions, setExtractions] = useState<Record<string, ExtractState>>({})
+  const [employeeId, setEmployeeId] = useState('EMP001')
 
   async function refresh() {
     const all = await db.receipts.orderBy('uploadedAt').reverse().toArray()
@@ -75,7 +80,25 @@ export function UploadReceiptsPanel() {
     const vlmResult = await extractReceipt(blob)
     setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_fallback' } }))
     const validated = await validateExtraction(vlmResult, blob)
-    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'done', validated } }))
+
+    let category: ReturnType<typeof classifyCategory> | undefined
+    let reconciliation: ReconciliationResult | undefined
+    if (validated.data) {
+      category = classifyCategory(validated.data)
+      // Fetched fresh here, not cached in component state from mount time —
+      // panels stay mounted across the whole session (Phase 5's fix), so a
+      // travel request added in another tab after this one mounted would
+      // otherwise never be seen. Found this exact bug by testing the real
+      // flow: add a travel request, then extract a matching receipt, and
+      // watch it wrongly come back unmatched.
+      const currentTravelRequests = await db.travelRequests.toArray()
+      reconciliation = reconcileTravel(validated.data, employeeId, currentTravelRequests)
+    }
+
+    setExtractions((prev) => ({
+      ...prev,
+      [receiptId]: { status: 'done', validated, category, reconciliation },
+    }))
   }
 
   async function handleFile(file: File) {
@@ -116,6 +139,21 @@ export function UploadReceiptsPanel() {
       <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
         PDF, JPEG or PNG only, checked by file content (not just the extension), 15MB max.
       </p>
+
+      <div className="mt-4 flex items-center gap-2">
+        <label className="text-sm text-neutral-600 dark:text-neutral-300" htmlFor="employeeId">
+          Claiming as employee:
+        </label>
+        <input
+          id="employeeId"
+          className="w-32 rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          value={employeeId}
+          onChange={(e) => setEmployeeId(e.target.value)}
+        />
+        <span className="text-xs text-neutral-400">
+          — receipts don't print an employee ID, so this is who the claim is for
+        </span>
+      </div>
 
       {error && (
         <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
@@ -231,15 +269,32 @@ export function UploadReceiptsPanel() {
                                       amount: {validated.data.amount ?? '—'} {validated.data.currency ?? ''}
                                     </p>
                                     <p>date: {validated.data.date ?? '—'}</p>
-                                    {(() => {
-                                      const cat = classifyCategory(validated.data!)
-                                      return (
-                                        <p>
-                                          category: {cat.category}
-                                          {cat.category !== 'Other' && ` (${(cat.confidence * 100).toFixed(0)}%)`}
-                                        </p>
-                                      )
-                                    })()}
+                                    {extractions[r.receiptId].category &&
+                                      (() => {
+                                        const cat = extractions[r.receiptId].category!
+                                        return (
+                                          <p>
+                                            category: {cat.category}
+                                            {cat.category !== 'Other' && ` (${(cat.confidence * 100).toFixed(0)}%)`}
+                                          </p>
+                                        )
+                                      })()}
+                                    {extractions[r.receiptId].reconciliation &&
+                                      (() => {
+                                        const recon = extractions[r.receiptId].reconciliation!
+                                        const reconLabel =
+                                          recon.status === 'MATCHED'
+                                            ? '✓ matched'
+                                            : recon.status === 'REVIEW'
+                                              ? '⚠ review'
+                                              : '— unmatched'
+                                        return (
+                                          <p title={recon.reason}>
+                                            travel: {reconLabel}
+                                            {recon.travelRequestId && ` (${recon.travelRequestId})`}
+                                          </p>
+                                        )
+                                      })()}
                                   </>
                                 ) : (
                                   <p>No usable data from either extraction path.</p>
