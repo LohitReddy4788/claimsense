@@ -1,5 +1,6 @@
 import { RawImage, type Tensor } from '@huggingface/transformers'
 import { getVlm } from '../modules/ai/vlmRuntime'
+import { computeFieldConfidence } from '../modules/validation/receiptSchema'
 import type { ExtractionResult, ExtractedReceiptData } from '../types/extraction'
 
 const PROMPT =
@@ -8,7 +9,6 @@ const PROMPT =
   '"date" (string, as printed), "lineItems" (array of {"description": string, "amount": number}). ' +
   'Use null for any field you cannot read. Output nothing except the JSON object.'
 
-const REQUIRED_FIELDS: (keyof ExtractedReceiptData)[] = ['vendor', 'amount', 'date']
 // Measured on real hardware (Intel Gen-12 iGPU, WebGPU): generation cost
 // scales directly with token count and dominates total latency far more
 // than the one-time model load. A receipt's JSON output doesn't need 256
@@ -38,11 +38,6 @@ function normalizeExtracted(raw: unknown): ExtractedReceiptData {
         amount: typeof item.amount === 'number' ? item.amount : null,
       })),
   }
-}
-
-function computeConfidence(data: ExtractedReceiptData): number {
-  const populated = REQUIRED_FIELDS.filter((key) => data[key] !== null && data[key] !== '').length
-  return populated / REQUIRED_FIELDS.length
 }
 
 async function runExtraction(imageBlob: Blob): Promise<ExtractionResult> {
@@ -96,7 +91,7 @@ async function runExtraction(imageBlob: Blob): Promise<ExtractionResult> {
     }
 
     const data = normalizeExtracted(parsed)
-    return { success: true, data, confidence: computeConfidence(data), rawModelOutput: completion, latencyMs }
+    return { success: true, data, confidence: computeFieldConfidence(data), rawModelOutput: completion, latencyMs }
   } catch (e) {
     return {
       success: false,

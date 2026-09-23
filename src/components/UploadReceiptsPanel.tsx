@@ -3,9 +3,10 @@ import { db } from '../modules/storage/db'
 import { ingestReceipt } from '../agents/ingestion/ingestReceipt'
 import { processDocument } from '../modules/document-processing/processDocument'
 import { extractReceipt } from '../agents/extraction/extractReceipt'
+import { validateExtraction } from '../modules/validation/validateExtraction'
 import type { ReceiptRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
-import type { ExtractionResult } from '../types/extraction'
+import type { ValidatedReceipt } from '../modules/validation/validateExtraction'
 
 interface PreviewState {
   status: 'processing' | 'ready' | 'failed'
@@ -18,8 +19,8 @@ interface PreviewState {
 }
 
 interface ExtractState {
-  status: 'running' | 'done'
-  result?: ExtractionResult
+  status: 'running_vlm' | 'running_fallback' | 'done'
+  validated?: ValidatedReceipt
 }
 
 export function UploadReceiptsPanel() {
@@ -69,9 +70,11 @@ export function UploadReceiptsPanel() {
   }
 
   async function runExtraction(receiptId: string, blob: Blob) {
-    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running' } }))
-    const result = await extractReceipt(blob)
-    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'done', result } }))
+    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_vlm' } }))
+    const vlmResult = await extractReceipt(blob)
+    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_fallback' } }))
+    const validated = await validateExtraction(vlmResult, blob)
+    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'done', validated } }))
   }
 
   async function handleFile(file: File) {
@@ -179,37 +182,58 @@ export function UploadReceiptsPanel() {
                             Extract with on-device AI
                           </button>
                         )}
-                        {extractions[r.receiptId]?.status === 'running' && (
+                        {extractions[r.receiptId]?.status === 'running_vlm' && (
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
                             Running on-device model… (first run loads ~500MB, can take a while)
                           </p>
                         )}
+                        {extractions[r.receiptId]?.status === 'running_fallback' && (
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                            Validating result…
+                          </p>
+                        )}
                         {extractions[r.receiptId]?.status === 'done' &&
                           (() => {
-                            const res = extractions[r.receiptId].result!
-                            if (!res.success) {
-                              return (
-                                <div className="rounded-md bg-red-50 px-2 py-1.5 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
-                                  <p>Extraction failed ({res.latencyMs.toFixed(0)}ms): {res.reason}</p>
-                                  {res.rawModelOutput && (
-                                    <p className="mt-1 text-neutral-500 dark:text-neutral-400">
-                                      Raw output: {res.rawModelOutput.slice(0, 200)}
-                                    </p>
-                                  )}
-                                </div>
-                              )
-                            }
+                            const validated = extractions[r.receiptId].validated!
+                            const badgeClass =
+                              validated.status === 'valid'
+                                ? 'bg-green-50 dark:bg-green-950'
+                                : 'bg-amber-50 dark:bg-amber-950'
                             return (
-                              <div className="rounded-md bg-green-50 px-2 py-1.5 text-xs text-neutral-700 dark:bg-green-950 dark:text-neutral-300">
-                                <p>
-                                  {res.latencyMs.toFixed(0)}ms · confidence {(res.confidence * 100).toFixed(0)}%
+                              <div className={`rounded-md ${badgeClass} px-2 py-1.5 text-xs text-neutral-700 dark:text-neutral-300`}>
+                                <p className="font-medium">
+                                  {validated.status === 'valid' ? '✓ Valid' : '⚠ Needs review'} · source:{' '}
+                                  {validated.source === 'vlm'
+                                    ? 'on-device AI'
+                                    : validated.source === 'ocr_fallback'
+                                      ? 'OCR fallback'
+                                      : 'none'}
                                 </p>
-                                <p>vendor: {res.data.vendor ?? '—'}</p>
                                 <p>
-                                  amount: {res.data.amount ?? '—'} {res.data.currency ?? ''}
+                                  AI: {(validated.vlmResult.success ? validated.vlmResult.confidence * 100 : 0).toFixed(0)}%
+                                  confidence
+                                  {validated.fallbackResult && (
+                                    <>
+                                      {' '}
+                                      · OCR fallback ran (
+                                      {validated.fallbackResult.success
+                                        ? `${(validated.fallbackResult.confidence * 100).toFixed(0)}% confidence`
+                                        : 'failed'}
+                                      )
+                                    </>
+                                  )}
                                 </p>
-                                <p>date: {res.data.date ?? '—'}</p>
-                                <p>line items: {res.data.lineItems.length}</p>
+                                {validated.data ? (
+                                  <>
+                                    <p>vendor: {validated.data.vendor ?? '—'}</p>
+                                    <p>
+                                      amount: {validated.data.amount ?? '—'} {validated.data.currency ?? ''}
+                                    </p>
+                                    <p>date: {validated.data.date ?? '—'}</p>
+                                  </>
+                                ) : (
+                                  <p>No usable data from either extraction path.</p>
+                                )}
                               </div>
                             )
                           })()}
