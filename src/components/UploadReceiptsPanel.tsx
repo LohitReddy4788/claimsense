@@ -6,10 +6,14 @@ import { extractReceipt } from '../agents/extraction/extractReceipt'
 import { validateExtraction } from '../modules/validation/validateExtraction'
 import { classifyCategory } from '../agents/category/classifyCategory'
 import { reconcileTravel } from '../agents/travel/reconcileTravel'
+import { evaluatePolicy } from '../modules/policy/policyEngine'
 import type { ReceiptRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
 import type { ValidatedReceipt } from '../modules/validation/validateExtraction'
 import type { ReconciliationResult } from '../types/reconciliation'
+import type { PolicyCheckResult } from '../types/policy'
+
+const DEFAULT_POLICY_SETTINGS = { id: 'default' as const, baseCurrency: 'USD', rates: {} }
 
 interface PreviewState {
   status: 'processing' | 'ready' | 'failed'
@@ -26,6 +30,7 @@ interface ExtractState {
   validated?: ValidatedReceipt
   category?: ReturnType<typeof classifyCategory>
   reconciliation?: ReconciliationResult
+  policy?: PolicyCheckResult
 }
 
 export function UploadReceiptsPanel() {
@@ -83,21 +88,31 @@ export function UploadReceiptsPanel() {
 
     let category: ReturnType<typeof classifyCategory> | undefined
     let reconciliation: ReconciliationResult | undefined
+    let policy: PolicyCheckResult | undefined
     if (validated.data) {
       category = classifyCategory(validated.data)
       // Fetched fresh here, not cached in component state from mount time —
       // panels stay mounted across the whole session (Phase 5's fix), so a
-      // travel request added in another tab after this one mounted would
-      // otherwise never be seen. Found this exact bug by testing the real
-      // flow: add a travel request, then extract a matching receipt, and
-      // watch it wrongly come back unmatched.
-      const currentTravelRequests = await db.travelRequests.toArray()
+      // travel request or policy added in another tab after this one
+      // mounted would otherwise never be seen (found this exact class of
+      // bug once already, in Phase 8 — applying the same fix here).
+      const [currentTravelRequests, currentPolicies, currentSettings] = await Promise.all([
+        db.travelRequests.toArray(),
+        db.policies.toArray(),
+        db.policySettings.get('default'),
+      ])
       reconciliation = reconcileTravel(validated.data, employeeId, currentTravelRequests)
+      policy = evaluatePolicy(
+        validated.data,
+        category.category,
+        currentPolicies,
+        currentSettings ?? DEFAULT_POLICY_SETTINGS,
+      )
     }
 
     setExtractions((prev) => ({
       ...prev,
-      [receiptId]: { status: 'done', validated, category, reconciliation },
+      [receiptId]: { status: 'done', validated, category, reconciliation, policy },
     }))
   }
 
@@ -292,6 +307,22 @@ export function UploadReceiptsPanel() {
                                           <p title={recon.reason}>
                                             travel: {reconLabel}
                                             {recon.travelRequestId && ` (${recon.travelRequestId})`}
+                                          </p>
+                                        )
+                                      })()}
+                                    {extractions[r.receiptId].policy &&
+                                      (() => {
+                                        const pol = extractions[r.receiptId].policy!
+                                        const polLabel =
+                                          pol.status === 'PASS'
+                                            ? '✓ pass'
+                                            : pol.status === 'VIOLATION'
+                                              ? '✗ violation'
+                                              : '⚠ review'
+                                        return (
+                                          <p title={pol.message}>
+                                            policy: {polLabel}
+                                            {pol.reasonCode && ` (${pol.reasonCode})`}
                                           </p>
                                         )
                                       })()}
