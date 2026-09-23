@@ -56,11 +56,13 @@ Ran `npm run build` (real production build, not dev server) and served the actua
 
 **Phase 5 — on-device VLM extraction.** Quantized browser vision-language models are workable but slow (expect 5–30s/receipt on CPU/WASM) and WebGPU support is uneven across browsers/hardware. This isn't fixable by more planning — it gets resolved by building it and measuring actual latency/accuracy on real hardware. Scope demo receipts to clean, typed text; don't test handwriting or heavy glare/blur.
 
-## New plan gap found (2026-09-23): PWA / Service Worker was never assigned a build step
+## PWA / Service Worker (Phase 17b) — optional, not required, don't over-prioritize
 
-**"Zero data egress" has two different meanings, and only one is built so far.** Right now the app requires a running server (`npm run dev`, or *some* HTTP server for `dist/`) to even load — that's normal for a web app, but it means "zero network" currently only covers *receipt/personal data never leaving the device once you're using the app*, not *the app itself opens with zero network*. The second, stronger claim — the one the R&A doc's tech-stack table implies by choosing "PWA + Service Worker — Installable/offline browser experience" — needs an actual Service Worker that precaches the app shell **and the bundled model** on first visit. That was never assigned to a numbered phase in the original 20-phase plan; it was implied by the tech stack but not built.
+**"Zero data egress" has two different meanings.** Right now (and even after P5-P19 are done) the app requires a running server to load (`npm run dev`, or *some* HTTP server for `dist/`) — that's normal for a web app. "Zero network" as actually required means *receipt/personal data never leaves the device*, which doesn't depend on a Service Worker at all. The stronger claim — *the app itself opens with zero network* — is what a Service Worker would add.
 
-**Fix:** added as **Phase 17b — PWA Manifest + Service Worker**, between Final UI/UX (P17) and Zero Data Egress Verification (P18) on the tracker. P18's offline test (devtools network disabled from a cold start) only proves what it claims to prove once P17b's Service Worker actually exists — right now that test would fail from a true cold start, since nothing precaches the model yet.
+**Checked this against the official problem statement's evaluation criteria (the ground truth), not just our own tech-stack table, before deciding whether to build it: it is NOT required for grading.** Evaluation covers extraction/policy accuracy, orchestration robustness, on-device operation for sensitive data, review-flow usability, and code quality — none of that needs the app shell to load offline. It IS a legitimate architectural choice already on record in the R&A doc (which explicitly rejected Electron/Tauri in favor of PWA for the "one-tab browser-local" reason), so it's not a fabricated task — just correctly optional.
+
+**Current status: Phase 17b, marked OPTIONAL/stretch on the tracker, scheduled last, not blocking anything.** Build it only if P0–P19 (the graded pipeline) are solid first. Do not let it eat time that belongs to Phase 5 onward.
 
 ## Working rule for whoever picks this up
 
