@@ -56,6 +56,12 @@ Ran `npm run build` (real production build, not dev server) and served the actua
 
 **Phase 5 — on-device VLM extraction.** Quantized browser vision-language models are workable but slow (expect 5–30s/receipt on CPU/WASM) and WebGPU support is uneven across browsers/hardware. This isn't fixable by more planning — it gets resolved by building it and measuring actual latency/accuracy on real hardware. Scope demo receipts to clean, typed text; don't test handwriting or heavy glare/blur.
 
+## New plan gap found (2026-09-23): PWA / Service Worker was never assigned a build step
+
+**"Zero data egress" has two different meanings, and only one is built so far.** Right now the app requires a running server (`npm run dev`, or *some* HTTP server for `dist/`) to even load — that's normal for a web app, but it means "zero network" currently only covers *receipt/personal data never leaving the device once you're using the app*, not *the app itself opens with zero network*. The second, stronger claim — the one the R&A doc's tech-stack table implies by choosing "PWA + Service Worker — Installable/offline browser experience" — needs an actual Service Worker that precaches the app shell **and the bundled model** on first visit. That was never assigned to a numbered phase in the original 20-phase plan; it was implied by the tech stack but not built.
+
+**Fix:** added as **Phase 17b — PWA Manifest + Service Worker**, between Final UI/UX (P17) and Zero Data Egress Verification (P18) on the tracker. P18's offline test (devtools network disabled from a cold start) only proves what it claims to prove once P17b's Service Worker actually exists — right now that test would fail from a true cold start, since nothing precaches the model yet.
+
 ## Working rule for whoever picks this up
 
 Don't mark a phase done without actually running it — start the dev server, read the rendered page, click through the interaction, check the console, and note what was specifically verified (see the Verification Log section on the tracker artifact for the P0 example). Update this file's Phase status table and the tracker together whenever a phase completes.
