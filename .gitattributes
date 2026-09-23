@@ -1,0 +1,4 @@
+# Vendored Tesseract.js runtime files — never convert line endings.
+# These are pre-built/minified third-party output; CRLF conversion is
+# pointless at best and risks subtle corruption at worst.
+public/tesseract/** -text
