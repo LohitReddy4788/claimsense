@@ -2,19 +2,11 @@ import { useEffect, useState } from 'react'
 import { db } from '../modules/storage/db'
 import { ingestReceipt } from '../agents/ingestion/ingestReceipt'
 import { processDocument } from '../modules/document-processing/processDocument'
-import { extractReceipt } from '../agents/extraction/extractReceipt'
-import { validateExtraction } from '../modules/validation/validateExtraction'
-import { classifyCategory } from '../agents/category/classifyCategory'
-import { reconcileTravel } from '../agents/travel/reconcileTravel'
-import { evaluatePolicy } from '../modules/policy/policyEngine'
-import { populateClaim } from '../agents/sheet/populateClaim'
-import type { ReceiptRecord, ClaimRecord } from '../types/records'
+import { runOrchestrator, type OrchestratorPhase } from '../agents/orchestrator/runOrchestrator'
+import type { ReceiptRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
 import type { ValidatedReceipt } from '../modules/validation/validateExtraction'
-import type { ReconciliationResult } from '../types/reconciliation'
-import type { PolicyCheckResult } from '../types/policy'
-
-const DEFAULT_POLICY_SETTINGS = { id: 'default' as const, baseCurrency: 'USD', rates: {} }
+import type { BuiltResult } from '../agents/orchestrator/orchestratorMachine'
 
 interface PreviewState {
   status: 'processing' | 'ready' | 'failed'
@@ -27,12 +19,10 @@ interface PreviewState {
 }
 
 interface ExtractState {
-  status: 'running_ocr' | 'running_vlm' | 'done'
+  status: OrchestratorPhase
   validated?: ValidatedReceipt
-  category?: ReturnType<typeof classifyCategory>
-  reconciliation?: ReconciliationResult
-  policy?: PolicyCheckResult
-  claim?: ClaimRecord
+  built?: BuiltResult
+  failureReason?: string
 }
 
 export function UploadReceiptsPanel() {
@@ -42,6 +32,12 @@ export function UploadReceiptsPanel() {
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({})
   const [extractions, setExtractions] = useState<Record<string, ExtractState>>({})
   const [employeeId, setEmployeeId] = useState('EMP001')
+  // Kept so "Extract" can hand the original File to the Orchestrator,
+  // which does its own document-processing step (with retries) rather
+  // than reusing the thumbnail's already-processed blob — the thumbnail
+  // preview and the orchestrator's pipeline are deliberately independent,
+  // so a flaky thumbnail render doesn't block a retry-capable real run.
+  const [files, setFiles] = useState<Record<string, File>>({})
 
   async function refresh() {
     const all = await db.receipts.orderBy('uploadedAt').reverse().toArray()
@@ -82,56 +78,31 @@ export function UploadReceiptsPanel() {
     }))
   }
 
-  async function runExtraction(receiptId: string, fileHash: string, blob: Blob) {
-    // OCR-first: for a clean typed receipt, OCR alone (well under a second)
-    // already gets every field right, so the multi-minute on-device AI
-    // model is only started if OCR's own result isn't good enough. The
-    // 'running_vlm' status only ever shows once OCR has already been tried
-    // and fallen through to it.
-    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_ocr' } }))
-    const validated = await validateExtraction(blob, () => {
-      setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_vlm' } }))
-      return extractReceipt(blob)
-    })
-
-    let category: ReturnType<typeof classifyCategory> | undefined
-    let reconciliation: ReconciliationResult | undefined
-    let policy: PolicyCheckResult | undefined
-    let claim: ClaimRecord | undefined
-    if (validated.data) {
-      category = classifyCategory(validated.data)
-      // Fetched fresh here, not cached in component state from mount time —
-      // panels stay mounted across the whole session (Phase 5's fix), so a
-      // travel request or policy added in another tab after this one
-      // mounted would otherwise never be seen (found this exact class of
-      // bug once already, in Phase 8 — applying the same fix here).
-      const [currentTravelRequests, currentPolicies, currentSettings] = await Promise.all([
-        db.travelRequests.toArray(),
-        db.policies.toArray(),
-        db.policySettings.get('default'),
-      ])
-      reconciliation = reconcileTravel(validated.data, employeeId, currentTravelRequests)
-      policy = evaluatePolicy(
-        validated.data,
-        category.category,
-        currentPolicies,
-        currentSettings ?? DEFAULT_POLICY_SETTINGS,
-      )
-      claim = await populateClaim({
-        receiptId,
-        fileHash,
-        data: validated.data,
-        extractionStatus: validated.status,
-        category: category.category,
-        reconciliation,
-        policy,
-      })
+  // Delegates the whole processing→extraction→classify→reconcile→policy→
+  // claim pipeline to the Orchestrator Agent (Phase 14) instead of running
+  // each step inline here — the Orchestrator owns retries (document
+  // processing and extraction each get up to 2 automatic retries on a
+  // genuine failure before routing to a 'failed' state) and merging
+  // results. onPhaseChange just updates the same small set of UI states
+  // this panel already had before the Orchestrator existed.
+  async function runExtraction(receiptId: string, fileHash: string, kind: DetectedFileKind) {
+    const file = files[receiptId]
+    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'processing' } }))
+    const result = await runOrchestrator(
+      { receiptId, fileHash, file, kind, employeeId },
+      (phase) => setExtractions((prev) => ({ ...prev, [receiptId]: { ...prev[receiptId], status: phase } })),
+    )
+    if (result.success) {
+      setExtractions((prev) => ({
+        ...prev,
+        [receiptId]: { status: 'done', validated: result.validated, built: result.built },
+      }))
+    } else {
+      setExtractions((prev) => ({
+        ...prev,
+        [receiptId]: { status: 'failed', failureReason: result.reason },
+      }))
     }
-
-    setExtractions((prev) => ({
-      ...prev,
-      [receiptId]: { status: 'done', validated, category, reconciliation, policy, claim },
-    }))
   }
 
   async function handleFile(file: File) {
@@ -144,6 +115,7 @@ export function UploadReceiptsPanel() {
         return
       }
       await refresh()
+      setFiles((prev) => ({ ...prev, [result.receipt.receiptId]: file }))
       // Fire and track separately — a processing failure shouldn't undo a successful ingest.
       runProcessing(result.receipt.receiptId, file, result.receipt.fileType as DetectedFileKind)
     } catch (e) {
@@ -243,27 +215,56 @@ export function UploadReceiptsPanel() {
                         Processing failed: {preview.reason}
                       </p>
                     )}
-                    {preview?.status === 'ready' && preview.blob && (
+                    {files[r.receiptId] && (
                       <div className="mt-2">
                         {!extractions[r.receiptId] && (
                           <button
                             type="button"
-                            onClick={() => runExtraction(r.receiptId, r.fileHash, preview.blob!)}
+                            onClick={() => runExtraction(r.receiptId, r.fileHash, r.fileType as DetectedFileKind)}
                             className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
                           >
                             Extract with on-device AI
                           </button>
                         )}
-                        {extractions[r.receiptId]?.status === 'running_ocr' && (
+                        {extractions[r.receiptId]?.status === 'processing' && (
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                            Preparing document…
+                          </p>
+                        )}
+                        {extractions[r.receiptId]?.status === 'ocr' && (
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
                             Reading text (OCR)…
                           </p>
                         )}
-                        {extractions[r.receiptId]?.status === 'running_vlm' && (
+                        {extractions[r.receiptId]?.status === 'vlm' && (
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
                             OCR wasn't confident enough — running the on-device AI model instead…
                             (first run loads ~500MB, can take a while)
                           </p>
+                        )}
+                        {extractions[r.receiptId]?.status === 'building' && (
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                            Classifying, matching travel, checking policy…
+                          </p>
+                        )}
+                        {extractions[r.receiptId]?.status === 'failed' && (
+                          <div className="rounded-md bg-red-50 px-2 py-1.5 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
+                            <p className="font-medium">⚠ Failed after automatic retries</p>
+                            <p>{extractions[r.receiptId].failureReason}</p>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExtractions((prev) => {
+                                  const next = { ...prev }
+                                  delete next[r.receiptId]
+                                  return next
+                                })
+                              }
+                              className="mt-1 rounded-md border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900"
+                            >
+                              Try again
+                            </button>
+                          </div>
                         )}
                         {extractions[r.receiptId]?.status === 'done' &&
                           (() => {
@@ -303,9 +304,9 @@ export function UploadReceiptsPanel() {
                                       amount: {validated.data.amount ?? '—'} {validated.data.currency ?? ''}
                                     </p>
                                     <p>date: {validated.data.date ?? '—'}</p>
-                                    {extractions[r.receiptId].category &&
+                                    {extractions[r.receiptId].built?.category &&
                                       (() => {
-                                        const cat = extractions[r.receiptId].category!
+                                        const cat = extractions[r.receiptId].built!.category!
                                         return (
                                           <p>
                                             category: {cat.category}
@@ -313,9 +314,9 @@ export function UploadReceiptsPanel() {
                                           </p>
                                         )
                                       })()}
-                                    {extractions[r.receiptId].reconciliation &&
+                                    {extractions[r.receiptId].built?.reconciliation &&
                                       (() => {
-                                        const recon = extractions[r.receiptId].reconciliation!
+                                        const recon = extractions[r.receiptId].built!.reconciliation!
                                         const reconLabel =
                                           recon.status === 'MATCHED'
                                             ? '✓ matched'
@@ -329,9 +330,9 @@ export function UploadReceiptsPanel() {
                                           </p>
                                         )
                                       })()}
-                                    {extractions[r.receiptId].policy &&
+                                    {extractions[r.receiptId].built?.policy &&
                                       (() => {
-                                        const pol = extractions[r.receiptId].policy!
+                                        const pol = extractions[r.receiptId].built!.policy!
                                         const polLabel =
                                           pol.status === 'PASS'
                                             ? '✓ pass'
@@ -345,9 +346,9 @@ export function UploadReceiptsPanel() {
                                           </p>
                                         )
                                       })()}
-                                    {extractions[r.receiptId].claim &&
+                                    {extractions[r.receiptId].built?.claim &&
                                       (() => {
-                                        const claim = extractions[r.receiptId].claim!
+                                        const claim = extractions[r.receiptId].built!.claim!
                                         return (
                                           <p className="font-medium">
                                             claim: {claim.status === 'draft' ? '✓ draft' : '⚠ needs review'}
