@@ -4,6 +4,7 @@ import { ingestReceipt } from '../agents/ingestion/ingestReceipt'
 import { processDocument } from '../modules/document-processing/processDocument'
 import { extractReceipt } from '../agents/extraction/extractReceipt'
 import { validateExtraction } from '../modules/validation/validateExtraction'
+import { classifyCategory } from '../agents/category/classifyCategory'
 import type { ReceiptRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
 import type { ValidatedReceipt } from '../modules/validation/validateExtraction'
@@ -230,6 +231,15 @@ export function UploadReceiptsPanel() {
                                       amount: {validated.data.amount ?? '—'} {validated.data.currency ?? ''}
                                     </p>
                                     <p>date: {validated.data.date ?? '—'}</p>
+                                    {(() => {
+                                      const cat = classifyCategory(validated.data!)
+                                      return (
+                                        <p>
+                                          category: {cat.category}
+                                          {cat.category !== 'Other' && ` (${(cat.confidence * 100).toFixed(0)}%)`}
+                                        </p>
+                                      )
+                                    })()}
                                   </>
                                 ) : (
                                   <p>No usable data from either extraction path.</p>
