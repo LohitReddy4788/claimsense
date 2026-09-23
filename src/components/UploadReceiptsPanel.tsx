@@ -27,7 +27,7 @@ interface PreviewState {
 }
 
 interface ExtractState {
-  status: 'running_vlm' | 'running_fallback' | 'done'
+  status: 'running_ocr' | 'running_vlm' | 'done'
   validated?: ValidatedReceipt
   category?: ReturnType<typeof classifyCategory>
   reconciliation?: ReconciliationResult
@@ -83,10 +83,16 @@ export function UploadReceiptsPanel() {
   }
 
   async function runExtraction(receiptId: string, fileHash: string, blob: Blob) {
-    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_vlm' } }))
-    const vlmResult = await extractReceipt(blob)
-    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_fallback' } }))
-    const validated = await validateExtraction(vlmResult, blob)
+    // OCR-first: for a clean typed receipt, OCR alone (well under a second)
+    // already gets every field right, so the multi-minute on-device AI
+    // model is only started if OCR's own result isn't good enough. The
+    // 'running_vlm' status only ever shows once OCR has already been tried
+    // and fallen through to it.
+    setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_ocr' } }))
+    const validated = await validateExtraction(blob, () => {
+      setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_vlm' } }))
+      return extractReceipt(blob)
+    })
 
     let category: ReturnType<typeof classifyCategory> | undefined
     let reconciliation: ReconciliationResult | undefined
@@ -248,14 +254,15 @@ export function UploadReceiptsPanel() {
                             Extract with on-device AI
                           </button>
                         )}
-                        {extractions[r.receiptId]?.status === 'running_vlm' && (
+                        {extractions[r.receiptId]?.status === 'running_ocr' && (
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                            Running on-device model… (first run loads ~500MB, can take a while)
+                            Reading text (OCR)…
                           </p>
                         )}
-                        {extractions[r.receiptId]?.status === 'running_fallback' && (
+                        {extractions[r.receiptId]?.status === 'running_vlm' && (
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                            Validating result…
+                            OCR wasn't confident enough — running the on-device AI model instead…
+                            (first run loads ~500MB, can take a while)
                           </p>
                         )}
                         {extractions[r.receiptId]?.status === 'done' &&
@@ -269,21 +276,21 @@ export function UploadReceiptsPanel() {
                               <div className={`rounded-md ${badgeClass} px-2 py-1.5 text-xs text-neutral-700 dark:text-neutral-300`}>
                                 <p className="font-medium">
                                   {validated.status === 'valid' ? '✓ Valid' : '⚠ Needs review'} · source:{' '}
-                                  {validated.source === 'vlm'
-                                    ? 'on-device AI'
-                                    : validated.source === 'ocr_fallback'
-                                      ? 'OCR fallback'
+                                  {validated.source === 'ocr'
+                                    ? 'OCR'
+                                    : validated.source === 'vlm'
+                                      ? 'on-device AI'
                                       : 'none'}
                                 </p>
                                 <p>
-                                  AI: {(validated.vlmResult.success ? validated.vlmResult.confidence * 100 : 0).toFixed(0)}%
+                                  OCR: {(validated.ocrResult.success ? validated.ocrResult.confidence * 100 : 0).toFixed(0)}%
                                   confidence
-                                  {validated.fallbackResult && (
+                                  {validated.vlmResult && (
                                     <>
                                       {' '}
-                                      · OCR fallback ran (
-                                      {validated.fallbackResult.success
-                                        ? `${(validated.fallbackResult.confidence * 100).toFixed(0)}% confidence`
+                                      · on-device AI ran (
+                                      {validated.vlmResult.success
+                                        ? `${(validated.vlmResult.confidence * 100).toFixed(0)}% confidence`
                                         : 'failed'}
                                       )
                                     </>

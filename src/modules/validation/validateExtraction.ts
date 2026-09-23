@@ -9,14 +9,17 @@ import type { ExtractionResult, ExtractedReceiptData } from '../../types/extract
 const CONFIDENCE_THRESHOLD = 1.0
 
 export type ValidationStatus = 'valid' | 'needs_review'
-export type ExtractionSource = 'vlm' | 'ocr_fallback' | 'none'
+export type ExtractionSource = 'ocr' | 'vlm' | 'none'
 
 export interface ValidatedReceipt {
   status: ValidationStatus
   data: ExtractedReceiptData | null
   source: ExtractionSource
-  vlmResult: ExtractionResult
-  fallbackResult: ExtractionResult | null
+  ocrResult: ExtractionResult
+  /** null when the VLM was never run — the whole point of the OCR-first
+   * order: a receipt OCR already reads with full confidence never pays the
+   * multi-minute VLM cost at all. */
+  vlmResult: ExtractionResult | null
 }
 
 // Takes the already-narrowed success:true variant so the schema/confidence
@@ -26,31 +29,39 @@ function isCompleteAndValid(result: Extract<ExtractionResult, { success: true }>
   return result.confidence >= CONFIDENCE_THRESHOLD && extractedReceiptSchema.safeParse(result.data).success
 }
 
-/** Validation + OCR Fallback module — the gate between "the AI produced
+/** Validation + OCR Fallback module — the gate between "extraction produced
  * something" and "this is trustworthy enough to build a claim from."
- * Never invents a value: if neither the VLM nor the OCR fallback produces
- * a complete result, whatever partial data exists (with nulls preserved)
- * is returned marked needs_review, for a human to fill in — never guessed. */
+ *
+ * Measured across every real test this session, OCR (Tesseract) reads a
+ * clean typed receipt in well under a second and got the exact field
+ * (amount) the on-device VLM kept missing, every time — while the VLM alone
+ * took 3-6+ minutes per receipt. So OCR now runs FIRST: for the common case
+ * (a clean, typed receipt) the slow VLM is never even started. The VLM is
+ * only invoked, lazily via `runVlm`, when OCR's own result is incomplete or
+ * low-confidence (e.g. a blurry photo or handwriting) — it stays in the
+ * pipeline as the fallback for exactly the cases OCR is weak at, just no
+ * longer the default path. `runVlm` is a callback rather than an
+ * already-awaited result specifically so callers don't have to start the
+ * VLM (and pay its cost) before knowing whether OCR already succeeded.
+ *
+ * Never invents a value: if neither path produces a complete result,
+ * whatever partial data exists (with nulls preserved) is returned marked
+ * needs_review, for a human to fill in — never guessed. */
 export async function validateExtraction(
-  vlmResult: ExtractionResult,
   imageBlob: Blob,
+  runVlm: () => Promise<ExtractionResult>,
 ): Promise<ValidatedReceipt> {
+  const ocrResult = await runOcrFallback(imageBlob)
+  if (ocrResult.success && isCompleteAndValid(ocrResult)) {
+    return { status: 'valid', data: ocrResult.data, source: 'ocr', ocrResult, vlmResult: null }
+  }
+
+  const vlmResult = await runVlm()
   if (vlmResult.success && isCompleteAndValid(vlmResult)) {
-    return { status: 'valid', data: vlmResult.data, source: 'vlm', vlmResult, fallbackResult: null }
+    return { status: 'valid', data: vlmResult.data, source: 'vlm', ocrResult, vlmResult }
   }
 
-  const fallbackResult = await runOcrFallback(imageBlob)
-  if (fallbackResult.success && isCompleteAndValid(fallbackResult)) {
-    return {
-      status: 'valid',
-      data: fallbackResult.data,
-      source: 'ocr_fallback',
-      vlmResult,
-      fallbackResult,
-    }
-  }
-
-  const bestData = vlmResult.success ? vlmResult.data : fallbackResult.success ? fallbackResult.data : null
-  const source: ExtractionSource = vlmResult.success ? 'vlm' : fallbackResult.success ? 'ocr_fallback' : 'none'
-  return { status: 'needs_review', data: bestData, source, vlmResult, fallbackResult }
+  const bestData = ocrResult.success ? ocrResult.data : vlmResult.success ? vlmResult.data : null
+  const source: ExtractionSource = ocrResult.success ? 'ocr' : vlmResult.success ? 'vlm' : 'none'
+  return { status: 'needs_review', data: bestData, source, ocrResult, vlmResult }
 }
