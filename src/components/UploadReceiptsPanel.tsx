@@ -7,7 +7,8 @@ import { validateExtraction } from '../modules/validation/validateExtraction'
 import { classifyCategory } from '../agents/category/classifyCategory'
 import { reconcileTravel } from '../agents/travel/reconcileTravel'
 import { evaluatePolicy } from '../modules/policy/policyEngine'
-import type { ReceiptRecord } from '../types/records'
+import { populateClaim } from '../agents/sheet/populateClaim'
+import type { ReceiptRecord, ClaimRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
 import type { ValidatedReceipt } from '../modules/validation/validateExtraction'
 import type { ReconciliationResult } from '../types/reconciliation'
@@ -31,6 +32,7 @@ interface ExtractState {
   category?: ReturnType<typeof classifyCategory>
   reconciliation?: ReconciliationResult
   policy?: PolicyCheckResult
+  claim?: ClaimRecord
 }
 
 export function UploadReceiptsPanel() {
@@ -80,7 +82,7 @@ export function UploadReceiptsPanel() {
     }))
   }
 
-  async function runExtraction(receiptId: string, blob: Blob) {
+  async function runExtraction(receiptId: string, fileHash: string, blob: Blob) {
     setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_vlm' } }))
     const vlmResult = await extractReceipt(blob)
     setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'running_fallback' } }))
@@ -89,6 +91,7 @@ export function UploadReceiptsPanel() {
     let category: ReturnType<typeof classifyCategory> | undefined
     let reconciliation: ReconciliationResult | undefined
     let policy: PolicyCheckResult | undefined
+    let claim: ClaimRecord | undefined
     if (validated.data) {
       category = classifyCategory(validated.data)
       // Fetched fresh here, not cached in component state from mount time —
@@ -108,11 +111,20 @@ export function UploadReceiptsPanel() {
         currentPolicies,
         currentSettings ?? DEFAULT_POLICY_SETTINGS,
       )
+      claim = await populateClaim({
+        receiptId,
+        fileHash,
+        data: validated.data,
+        extractionStatus: validated.status,
+        category: category.category,
+        reconciliation,
+        policy,
+      })
     }
 
     setExtractions((prev) => ({
       ...prev,
-      [receiptId]: { status: 'done', validated, category, reconciliation, policy },
+      [receiptId]: { status: 'done', validated, category, reconciliation, policy, claim },
     }))
   }
 
@@ -230,7 +242,7 @@ export function UploadReceiptsPanel() {
                         {!extractions[r.receiptId] && (
                           <button
                             type="button"
-                            onClick={() => runExtraction(r.receiptId, preview.blob!)}
+                            onClick={() => runExtraction(r.receiptId, r.fileHash, preview.blob!)}
                             className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
                           >
                             Extract with on-device AI
@@ -323,6 +335,17 @@ export function UploadReceiptsPanel() {
                                           <p title={pol.message}>
                                             policy: {polLabel}
                                             {pol.reasonCode && ` (${pol.reasonCode})`}
+                                          </p>
+                                        )
+                                      })()}
+                                    {extractions[r.receiptId].claim &&
+                                      (() => {
+                                        const claim = extractions[r.receiptId].claim!
+                                        return (
+                                          <p className="font-medium">
+                                            claim: {claim.status === 'draft' ? '✓ draft' : '⚠ needs review'}
+                                            {claim.duplicateOfClaimId &&
+                                              ` — possible duplicate of ${claim.duplicateOfClaimId}`}
                                           </p>
                                         )
                                       })()}

@@ -16,6 +16,26 @@ const PROMPT =
 // handful of line items, and roughly halves generation time.
 const MAX_NEW_TOKENS = 128
 
+// Observed real-hardware latency ranged 213-241s across earlier tests, then
+// one run during Phase 10 testing ran past 440s with no error and no sign
+// of a stall (network idle, worker alive) — real variance, not provably a
+// hang, but that gap is exactly the risk a missing timeout leaves open:
+// with no cap, the UI would show "Running…" forever if generate() ever did
+// truly hang. Set generously above every observed run, not tuned to cut
+// off slow-but-legitimate ones.
+const GENERATION_TIMEOUT_MS = 600_000 // 10 minutes
+
+class ExtractionTimeoutError extends Error {}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new ExtractionTimeoutError(`Timed out after ${ms}ms`)), ms),
+    ),
+  ])
+}
+
 function extractJsonBlock(text: string): string | null {
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
@@ -55,10 +75,10 @@ async function runExtraction(imageBlob: Blob): Promise<ExtractionResult> {
     }) as string
 
     const inputs = await processor(promptText, image)
-    const generated = await model.generate({
-      ...inputs,
-      max_new_tokens: MAX_NEW_TOKENS,
-    })
+    const generated = await withTimeout(
+      model.generate({ ...inputs, max_new_tokens: MAX_NEW_TOKENS }) as Promise<unknown>,
+      GENERATION_TIMEOUT_MS,
+    )
     // generate() returns a Tensor directly unless return_dict_in_generate is
     // requested (we don't); the ModelOutput branch is a defensive fallback,
     // not the expected runtime path.
