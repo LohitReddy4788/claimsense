@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { db } from '../modules/storage/db'
 import { editClaim, approveClaim } from '../agents/review/reviewClaim'
+import { exportApprovedClaims } from '../agents/export/exportClaims'
 import { EXPENSE_CATEGORIES } from '../types/category'
 import type { ClaimRecord, ReceiptRecord } from '../types/records'
 
@@ -35,6 +36,8 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
   const [receiptsById, setReceiptsById] = useState<Record<string, ReceiptRecord>>({})
   const [edits, setEdits] = useState<Record<string, EditBuffer>>({})
   const [message, setMessage] = useState<Record<string, string>>({})
+  const [exportMessage, setExportMessage] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   async function refresh() {
     try {
@@ -92,11 +95,35 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
     await refresh()
   }
 
+  async function handleExport() {
+    setExporting(true)
+    const result = await exportApprovedClaims()
+    setExportMessage(
+      result.success
+        ? `✓ Exported ${result.claimCount} approved claim(s) to ${result.fileName}`
+        : `⚠ ${result.reason}`,
+    )
+    setExporting(false)
+  }
+
   return (
     <div>
-      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-        Claims ({claims.length})
-      </p>
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          Claims ({claims.length})
+        </p>
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="rounded-md border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        >
+          {exporting ? 'Exporting…' : 'Export approved claims (XLSX)'}
+        </button>
+      </div>
+      {exportMessage && (
+        <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">{exportMessage}</p>
+      )}
       {claims.length === 0 ? (
         <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
           No claims yet — extract a receipt in Upload Receipts first.
