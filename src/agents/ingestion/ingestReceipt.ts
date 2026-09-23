@@ -1,6 +1,7 @@
 import { db } from '../../modules/storage/db'
 import { saveReceiptFile, hashFile } from '../../modules/storage/opfs'
 import { detectFileKind } from '../../modules/validation/fileSignature'
+import { appendAuditEntry } from '../../modules/audit/auditLog'
 import { generateId } from '../../utils/id'
 import type { ReceiptRecord } from '../../types/records'
 
@@ -47,6 +48,7 @@ export async function ingestReceipt(file: File): Promise<IngestResult> {
     uploadedAt: new Date().toISOString(),
   }
   await db.receipts.add(receipt)
+  await appendAuditEntry(receiptId, 'RECEIPT_INGESTED', `${file.name} (${kind}, ${fileHash.slice(0, 12)}…)`)
 
   return { success: true, receipt }
 }

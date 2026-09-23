@@ -1,4 +1,5 @@
 import { db } from '../../modules/storage/db'
+import { appendAuditEntry } from '../../modules/audit/auditLog'
 import type { ClaimRecord } from '../../types/records'
 
 export type ClaimEditableFields = Pick<ClaimRecord, 'vendor' | 'amount' | 'currency' | 'date' | 'category'>
@@ -12,6 +13,10 @@ export type ClaimEditableFields = Pick<ClaimRecord, 'vendor' | 'amount' | 'curre
  * nothing is silently hidden. */
 export async function editClaim(claimId: string, patch: Partial<ClaimEditableFields>): Promise<void> {
   await db.claims.update(claimId, patch)
+  const fields = Object.entries(patch)
+    .map(([key, value]) => `${key}: ${value ?? '—'}`)
+    .join(', ')
+  await appendAuditEntry(claimId, 'CLAIM_EDITED', fields || '(no fields changed)')
 }
 
 export type ApproveResult =
@@ -46,5 +51,6 @@ export async function approveClaim(claimId: string): Promise<ApproveResult> {
   if (!updated) {
     return { success: false, reason: 'Claim was updated but could not be re-read afterward.' }
   }
+  await appendAuditEntry(claimId, 'CLAIM_APPROVED', `approved at ${approvedAt}`)
   return { success: true, claim: updated }
 }

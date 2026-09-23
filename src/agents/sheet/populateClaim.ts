@@ -1,4 +1,5 @@
 import { db } from '../../modules/storage/db'
+import { appendAuditEntry } from '../../modules/audit/auditLog'
 import { generateId } from '../../utils/id'
 import type { ExtractedReceiptData } from '../../types/extraction'
 import type { ExpenseCategory } from '../../types/category'
@@ -100,5 +101,11 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
   }
 
   await db.claims.add(claim)
+  await appendAuditEntry(
+    claim.claimId,
+    'CLAIM_CREATED',
+    `vendor: ${claim.vendor ?? '—'}, amount: ${claim.amount ?? '—'} ${claim.currency ?? ''}, status: ${claim.status}` +
+      (duplicateOfClaimId ? `, possible duplicate of ${duplicateOfClaimId}` : ''),
+  )
   return claim
 }

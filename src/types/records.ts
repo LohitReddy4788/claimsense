@@ -66,6 +66,11 @@ export interface AuditLogRecord {
   id?: number
   entityId: string
   action: string
+  /** Human-readable summary of what happened (e.g. "vendor: X -> Y"). Part
+   * of the hash input, not just display text — changing this after the
+   * fact without recomputing the hash is exactly the tampering the chain
+   * is built to catch. */
+  detail: string
   currentHash: string
   previousHash: string
   timestamp: string
