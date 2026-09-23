@@ -10,8 +10,31 @@ interface ExtractionResponse {
   result: ExtractionResult
 }
 
+// Phase 16 finding (Error Handling + Retry): nothing here ever handled the
+// worker itself dying — a WebGPU context loss, an out-of-memory kill, or
+// any other fatal crash. worker.onerror was never set, so a crashed
+// worker's pending request would simply never resolve. Worse, because
+// requests are now queued (Phase 15's fix), that one stuck request would
+// permanently block sendQueue from ever advancing — a single crash would
+// silently deadlock EVERY future extraction for the rest of the session,
+// with no error, no timeout, no way to recover short of a full page
+// reload. Fixed two ways below: a client-side timeout as the guaranteed
+// backstop (mirrors the same defense-in-depth pattern already used for
+// PDF rendering in processDocument.ts and generation itself inside
+// extractionWorker.ts), plus a worker.onerror handler that fails fast and
+// replaces the worker instead of waiting out the full timeout when the
+// platform does surface a real error event.
+const CLIENT_TIMEOUT_MS = 11 * 60 * 1000 // slightly above the worker's own 10-minute internal cap
+
 let worker: Worker | null = null
 const pending = new Map<string, (result: ExtractionResult) => void>()
+
+function failAllPending(reason: string): void {
+  for (const resolve of pending.values()) {
+    resolve({ success: false, reason, latencyMs: 0 })
+  }
+  pending.clear()
+}
 
 function getWorker(): Worker {
   if (!worker) {
@@ -25,6 +48,13 @@ function getWorker(): Worker {
         pending.delete(requestId)
         resolve(result)
       }
+    }
+    worker.onerror = (event) => {
+      failAllPending(`Extraction worker crashed: ${event.message || 'unknown error'}`)
+      // Don't keep serving requests to a worker that just proved it can
+      // crash — the next call gets a fresh instance instead.
+      worker?.terminate()
+      worker = null
     }
   }
   return worker
@@ -48,7 +78,25 @@ let sendQueue: Promise<unknown> = Promise.resolve()
 function sendToWorker(imageBlob: Blob): Promise<ExtractionResult> {
   return new Promise((resolve) => {
     const requestId = crypto.randomUUID()
-    pending.set(requestId, resolve)
+
+    // The guaranteed backstop: even if the worker hangs with no error
+    // event at all (a true silent stall, not just a crash), this settles
+    // the promise anyway — which is what lets sendQueue advance and keeps
+    // every later request from being blocked forever by one bad one.
+    const timeoutId = setTimeout(() => {
+      if (pending.delete(requestId)) {
+        resolve({
+          success: false,
+          reason: `No response from the extraction worker after ${CLIENT_TIMEOUT_MS / 1000}s (it may have hung or crashed silently).`,
+          latencyMs: CLIENT_TIMEOUT_MS,
+        })
+      }
+    }, CLIENT_TIMEOUT_MS)
+
+    pending.set(requestId, (result) => {
+      clearTimeout(timeoutId)
+      resolve(result)
+    })
     const request: ExtractionRequest = { requestId, imageBlob }
     getWorker().postMessage(request)
   })

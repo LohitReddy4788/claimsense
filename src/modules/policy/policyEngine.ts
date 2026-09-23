@@ -43,6 +43,23 @@ export function evaluatePolicy(
     }
   }
 
+  // A real expense receipt's total is never zero or negative — a value
+  // like this only happens from a genuine extraction misread (e.g. a
+  // minus sign or a refund line mistaken for the total). Found by
+  // deliberately testing a negative amount during Phase 16: without this
+  // check, -50 numerically passes "within" any positive limit and would
+  // have silently APPROVED a nonsensical claim instead of flagging it —
+  // exactly the kind of silent-wrong-answer this module exists to avoid.
+  if (data.amount <= 0) {
+    return {
+      status: 'REVIEW',
+      reasonCode: 'AMOUNT_INVALID',
+      message: `Extracted amount (${data.amount}) is zero or negative — likely a misread, not a real charge.`,
+      convertedAmount: null,
+      baseCurrency: settings.baseCurrency,
+    }
+  }
+
   if (!data.currency) {
     return {
       status: 'REVIEW',
