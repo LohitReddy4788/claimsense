@@ -13,20 +13,49 @@ const AMOUNT_PATTERN = /(?:total|amount|due)?\s*[:\-]?\s*(?:USD|EUR|GBP|INR|\$|�
 const DATE_PATTERN = /\b(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}-\d{1,2}-\d{2,4})\b/
 const CURRENCY_PATTERN = /\b(USD|EUR|GBP|INR)\b|[$€£₹]/
 
+// Found via a real (not synthetic single-line) receipt during the final
+// demo pass: a stylized title font the OCR engine failed to read entirely
+// caused the vendor-picking heuristic to fall through to the very next
+// recognizable line, which was a phone number ("Tel: (555) 019-4472") —
+// and because that value is non-null, the confidence score (which only
+// checks presence, not plausibility) reported 100% despite being wrong.
+// These patterns catch the most common non-vendor metadata lines a real
+// receipt prints near the top (phone numbers, labeled fields) so the
+// heuristic skips past them the same way it already skips address lines
+// that happen to start with a digit.
+const PHONE_LIKE_PATTERN = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/
+const METADATA_LABEL_PATTERN = /^(tel|phone|fax|date|time|server|table|order|receipt|invoice)\b[:#]?/i
+
 /** Heuristic field extraction from raw OCR text — deliberately simple
- * regexes, not an LLM. Vendor is a guess (first non-numeric line); amount
- * picks the LARGEST dollar-formatted number found, on the assumption a
- * receipt's total is usually its biggest line item. Wrong more often than
- * the VLM would be, by design this only runs when the VLM already failed
- * or was low-confidence, and its own confidence score (gap-fix #4) still
- * gates whether it's trusted or sent to human review either way. */
+ * regexes, not an LLM. Vendor is a guess (first line that doesn't look
+ * like a number, phone, or a labeled metadata field); amount picks the
+ * LARGEST dollar-formatted number found, on the assumption a receipt's
+ * total is usually its biggest line item. Wrong more often than the VLM
+ * would be, by design this only runs when the VLM already failed or was
+ * low-confidence, and its own confidence score (gap-fix #4) still gates
+ * whether it's trusted or sent to human review either way — though that
+ * gate only checks presence, not plausibility, so a wrong-but-non-null
+ * guess can still slip through at 100% "confidence"; picking a better
+ * candidate line here is the real defense against that. */
 function parseReceiptText(text: string): ExtractedReceiptData {
   const lines = text
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
 
-  const vendor = lines.find((l) => !/^\d/.test(l) && l.length > 2) ?? null
+  // A real vendor name is always near the very top of a receipt. Limiting
+  // the search to the first few lines matters: without it, once every
+  // early line is correctly excluded as metadata (as happens when the
+  // vendor's own title text is missed by OCR entirely — the exact case
+  // this fix was found from), the search would otherwise fall through to
+  // a line-item description and confidently mislabel it as the vendor,
+  // which is a worse failure than admitting there's no usable candidate.
+  const VENDOR_SEARCH_WINDOW = 5
+  const vendor =
+    lines
+      .slice(0, VENDOR_SEARCH_WINDOW)
+      .find((l) => !/^\d/.test(l) && l.length > 2 && !PHONE_LIKE_PATTERN.test(l) && !METADATA_LABEL_PATTERN.test(l)) ??
+    null
 
   const amounts = [...text.matchAll(AMOUNT_PATTERN)]
     .map((m) => parseFloat(m[1].replace(',', '.')))
