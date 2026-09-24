@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { db } from '../modules/storage/db'
 import { ingestReceipt } from '../agents/ingestion/ingestReceipt'
 import { processDocument } from '../modules/document-processing/processDocument'
+import { readReceiptFile } from '../modules/storage/opfs'
 import { runOrchestrator, type OrchestratorPhase } from '../agents/orchestrator/runOrchestrator'
 import type { ReceiptRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
@@ -38,10 +39,46 @@ export function UploadReceiptsPanel() {
   // preview and the orchestrator's pipeline are deliberately independent,
   // so a flaky thumbnail render doesn't block a retry-capable real run.
   const [files, setFiles] = useState<Record<string, File>>({})
+  // Tracks which receipts we've already tried to restore from OPFS this
+  // session, so a reload doesn't repeat the read/reprocess on every
+  // refresh() call — a ref rather than state because it's bookkeeping,
+  // not something that should trigger a re-render on its own.
+  const restoredRef = useRef<Set<string>>(new Set())
 
   async function refresh() {
     const all = await db.receipts.orderBy('uploadedAt').reverse().toArray()
     setReceipts(all)
+
+    // Found live (2026-09-24): after a page reload, `files` and `previews`
+    // reset to empty — they only ever lived in this component's memory,
+    // never persisted — which silently removed the "Extract" button and
+    // thumbnail from any receipt that hadn't been extracted yet, even
+    // though the receipt record AND its actual file bytes were both still
+    // safely in IndexedDB/OPFS the whole time (Phase 1's own guarantee).
+    // The fix: read the file back from OPFS (where ingestReceipt already
+    // saved it) and re-populate both, restoring full functionality
+    // without asking the user to re-upload something already saved.
+    for (const receipt of all) {
+      if (restoredRef.current.has(receipt.receiptId)) continue
+      restoredRef.current.add(receipt.receiptId)
+      try {
+        const file = await readReceiptFile(receipt.receiptId)
+        setFiles((prev) => ({ ...prev, [receipt.receiptId]: file }))
+        // runProcessing does its own setPreviews calls internally — called
+        // directly here, not from inside a state updater, since updater
+        // functions can run more than once under StrictMode and shouldn't
+        // trigger side effects. restoredRef above already guarantees this
+        // whole block runs at most once per receiptId, so no extra guard
+        // is needed here.
+        runProcessing(receipt.receiptId, file, receipt.fileType as DetectedFileKind)
+      } catch (e) {
+        // The receipt record exists but its file is missing from OPFS —
+        // a genuinely unexpected state, not one to guess around. Leave
+        // this receipt's preview/extract button absent rather than
+        // pretending a restore succeeded.
+        console.error(`Could not restore file for receipt ${receipt.receiptId}:`, e)
+      }
+    }
   }
 
   useEffect(() => {
@@ -114,6 +151,12 @@ export function UploadReceiptsPanel() {
         setError(result.reason)
         return
       }
+      // Mark restored BEFORE refresh() so its OPFS-restoration pass (which
+      // would otherwise not yet see this receipt in `files`/`previews`,
+      // since those two setState calls below haven't run yet) doesn't
+      // redundantly re-read the file we already have in hand and process
+      // it a second time in parallel.
+      restoredRef.current.add(result.receipt.receiptId)
       await refresh()
       setFiles((prev) => ({ ...prev, [result.receipt.receiptId]: file }))
       // Fire and track separately — a processing failure shouldn't undo a successful ingest.
