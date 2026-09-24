@@ -6,6 +6,7 @@ import { PoliciesPanel } from './components/PoliciesPanel'
 import { TravelRequestsPanel } from './components/TravelRequestsPanel'
 import { ClaimsPanel } from './components/ClaimsPanel'
 import { AuditLogsPanel } from './components/AuditLogsPanel'
+import { PwaUpdateBanner } from './components/PwaUpdateBanner'
 import { SECTIONS, type DashboardSection } from './types/dashboard'
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
           <SectionPanel meta={section}>{panelBodies[section.id]}</SectionPanel>
         </div>
       ))}
+      <PwaUpdateBanner />
     </div>
   )
 }
