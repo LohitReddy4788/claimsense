@@ -294,6 +294,14 @@ export function UploadReceiptsPanel() {
                                         ? `${(validated.vlmResult.confidence * 100).toFixed(0)}% confidence`
                                         : 'failed'}
                                       )
+                                      {validated.vlmResult.device === 'wasm' && (
+                                        <span className="text-amber-600 dark:text-amber-400">
+                                          {' '}
+                                          · CPU fallback (WASM) — no GPU acceleration detected on this device, which
+                                          is why this took longer than the ~4 minute baseline
+                                        </span>
+                                      )}
+                                      {validated.vlmResult.device === 'webgpu' && ' · GPU-accelerated (WebGPU)'}
                                     </>
                                   )}
                                 </p>

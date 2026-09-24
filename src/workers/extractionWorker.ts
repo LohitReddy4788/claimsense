@@ -62,8 +62,15 @@ function normalizeExtracted(raw: unknown): ExtractedReceiptData {
 
 async function runExtraction(imageBlob: Blob): Promise<ExtractionResult> {
   const startedAt = performance.now()
+  // Captured outside the try block (not just in the success branch) so a
+  // failure AFTER the model loaded still reports which device it failed
+  // on — that's exactly the case where knowing "this was WASM" explains
+  // why it took as long as it did before ultimately timing out.
+  let device: 'webgpu' | 'wasm' | undefined
   try {
-    const { processor, model } = await getVlm()
+    const vlm = await getVlm()
+    device = vlm.device
+    const { processor, model } = vlm
     const image = await RawImage.fromBlob(imageBlob)
 
     const conversation = [
@@ -95,7 +102,7 @@ async function runExtraction(imageBlob: Blob): Promise<ExtractionResult> {
     const latencyMs = performance.now() - startedAt
     const jsonBlock = extractJsonBlock(completion)
     if (!jsonBlock) {
-      return { success: false, reason: 'Model output contained no JSON object.', rawModelOutput: completion, latencyMs }
+      return { success: false, reason: 'Model output contained no JSON object.', rawModelOutput: completion, latencyMs, device }
     }
 
     let parsed: unknown
@@ -107,16 +114,18 @@ async function runExtraction(imageBlob: Blob): Promise<ExtractionResult> {
         reason: `Model output was not valid JSON: ${e instanceof Error ? e.message : String(e)}`,
         rawModelOutput: completion,
         latencyMs,
+        device,
       }
     }
 
     const data = normalizeExtracted(parsed)
-    return { success: true, data, confidence: computeFieldConfidence(data), rawModelOutput: completion, latencyMs }
+    return { success: true, data, confidence: computeFieldConfidence(data), rawModelOutput: completion, latencyMs, device }
   } catch (e) {
     return {
       success: false,
       reason: `Extraction failed: ${e instanceof Error ? e.message : String(e)}`,
       latencyMs: performance.now() - startedAt,
+      device,
     }
   }
 }
