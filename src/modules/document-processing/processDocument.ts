@@ -102,3 +102,53 @@ async function processImage(file: File): Promise<ProcessResult> {
 export async function processDocument(file: File, kind: DetectedFileKind): Promise<ProcessResult> {
   return kind === 'pdf' ? processPdf(file) : processImage(file)
 }
+
+export type MultiPageResult =
+  | { success: true; pages: Blob[]; totalPageCount: number; pagesRendered: number }
+  | { success: false; reason: string }
+
+/** Renders up to `maxPages` pages of a PDF to individual bounded-size
+ * PNGs, for the policy-PDF import flow (Company Policies panel) — a
+ * receipt is always effectively one page, but a real policy document can
+ * span several, and its spending-limit numbers could be on any of them.
+ * Capped rather than unbounded: each page costs a real multi-minute
+ * on-device AI read downstream, so an unbounded page count could turn one
+ * upload into an effectively unusable wait. 3 pages covers the common
+ * case (limits are almost always stated in an early summary section, not
+ * buried deep in policy prose) while keeping worst-case wait time
+ * bounded and predictable — the UI states this limit explicitly rather
+ * than silently truncating. */
+export async function renderPdfPages(file: File, maxPages: number): Promise<MultiPageResult> {
+  try {
+    const data = await file.arrayBuffer()
+    const doc = await pdfjsLib.getDocument({ data }).promise
+    const pagesToRender = Math.min(doc.numPages, maxPages)
+    const pages: Blob[] = []
+
+    for (let pageNum = 1; pageNum <= pagesToRender; pageNum++) {
+      const page = await doc.getPage(pageNum)
+      const baseViewport = page.getViewport({ scale: 1 })
+      const { scale, width, height } = scaleToFit(baseViewport.width, baseViewport.height)
+      const viewport = page.getViewport({ scale })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d')
+      if (!context) return { success: false, reason: 'Canvas 2D context unavailable.' }
+
+      await withTimeout(
+        page.render({ canvas, canvasContext: context, viewport, intent: 'print' }).promise,
+        RENDER_TIMEOUT_MS,
+      )
+      pages.push(await canvasToBlob(canvas))
+    }
+
+    return { success: true, pages, totalPageCount: doc.numPages, pagesRendered: pagesToRender }
+  } catch (e) {
+    return {
+      success: false,
+      reason: `Could not render PDF (it may be corrupt): ${e instanceof Error ? e.message : String(e)}`,
+    }
+  }
+}

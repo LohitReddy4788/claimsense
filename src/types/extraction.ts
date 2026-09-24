@@ -41,3 +41,31 @@ export type ExtractionResult =
       latencyMs: number
       device?: VlmDevice
     }
+
+/** One candidate spending-limit rule read off a policy document page —
+ * "candidate" because nothing here is ever saved automatically. The
+ * Policies panel shows each one for a human to individually confirm
+ * before it becomes a real rule (see PoliciesPanel's policy-import flow):
+ * getting a policy LIMIT wrong is a materially worse failure than getting
+ * a receipt field wrong, since every future receipt gets silently
+ * checked against it with no downstream review to catch a bad number. */
+export interface PolicyRuleCandidate {
+  category: string
+  limitAmount: number
+}
+
+export type PolicyExtractionResult =
+  | {
+      success: true
+      candidates: PolicyRuleCandidate[]
+      rawModelOutput: string
+      latencyMs: number
+      device?: VlmDevice
+    }
+  | {
+      success: false
+      reason: string
+      rawModelOutput?: string
+      latencyMs: number
+      device?: VlmDevice
+    }

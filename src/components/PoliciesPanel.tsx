@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { db } from '../modules/storage/db'
 import { generateId } from '../utils/id'
 import type { PolicyRecord, PolicySettingsRecord } from '../types/records'
+import { extractPolicyFromPdf, MAX_POLICY_PDF_PAGES } from '../agents/policy-import/extractPolicyFromPdf'
+import type { PolicyRuleCandidate } from '../types/extraction'
 
 const DEFAULT_SETTINGS: PolicySettingsRecord = {
   id: 'default',
@@ -16,6 +18,18 @@ export function PoliciesPanel() {
   const [limitAmount, setLimitAmount] = useState('')
   const [newCurrency, setNewCurrency] = useState('')
   const [newRate, setNewRate] = useState('')
+
+  // Suggestions from a policy-PDF import (Version A: read-only until a
+  // human confirms). Kept entirely separate from `policies` (the real,
+  // saved rules) — nothing here is a policy until addSuggestion() below
+  // moves one row across, one row at a time, on an explicit click.
+  const [importStatus, setImportStatus] = useState<
+    | { phase: 'idle' }
+    | { phase: 'reading'; pageNumber: number; pagesToRead: number }
+    | { phase: 'error'; reason: string }
+    | { phase: 'done'; pagesRead: number; totalPageCount: number }
+  >({ phase: 'idle' })
+  const [suggestions, setSuggestions] = useState<PolicyRuleCandidate[]>([])
 
   async function refresh() {
     const [allPolicies, savedSettings] = await Promise.all([
@@ -59,6 +73,41 @@ export function PoliciesPanel() {
     setSettings(updated)
     setNewCurrency('')
     setNewRate('')
+  }
+
+  async function handlePolicyPdf(file: File) {
+    setSuggestions([])
+    setImportStatus({ phase: 'reading', pageNumber: 0, pagesToRead: 0 })
+    const result = await extractPolicyFromPdf(file, ({ pageNumber, pagesToRead }) =>
+      setImportStatus({ phase: 'reading', pageNumber, pagesToRead }),
+    )
+    if (!result.success) {
+      setImportStatus({ phase: 'error', reason: result.reason })
+      return
+    }
+    setSuggestions(result.candidates)
+    setImportStatus({ phase: 'done', pagesRead: result.pagesRead, totalPageCount: result.totalPageCount })
+  }
+
+  // The only place a policy-import suggestion ever becomes a real rule —
+  // one row, one explicit click. Nothing from the PDF read is ever saved
+  // automatically, matching the same "never invent a value silently"
+  // principle used everywhere else in the app, but stricter here: a wrong
+  // policy limit has no downstream review to catch it the way a wrong
+  // receipt field does.
+  async function addSuggestion(candidate: PolicyRuleCandidate) {
+    const record: PolicyRecord = {
+      policyId: generateId('pol'),
+      category: candidate.category,
+      limitAmount: candidate.limitAmount,
+    }
+    await db.policies.add(record)
+    setSuggestions((prev) => prev.filter((c) => c !== candidate))
+    await refresh()
+  }
+
+  function dismissSuggestion(candidate: PolicyRuleCandidate) {
+    setSuggestions((prev) => prev.filter((c) => c !== candidate))
   }
 
   return (
@@ -111,6 +160,75 @@ export function PoliciesPanel() {
             {Object.entries(settings.rates).map(([code, rate]) => (
               <li key={code}>
                 1 {code} = {rate} {settings.baseCurrency}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          Import limits from a policy PDF
+        </p>
+        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+          Reads up to {MAX_POLICY_PDF_PAGES} pages on-device (no API, nothing leaves this machine) and suggests
+          rules below — nothing is saved until you click Add on a specific row.
+        </p>
+        <div className="mt-3">
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (file) handlePolicyPdf(file)
+            }}
+            disabled={importStatus.phase === 'reading'}
+            className="text-sm text-neutral-600 dark:text-neutral-300"
+          />
+        </div>
+        {importStatus.phase === 'reading' && (
+          <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+            {importStatus.pagesToRead > 0
+              ? `Reading page ${importStatus.pageNumber} of ${importStatus.pagesToRead}… this can take several minutes per page on-device.`
+              : 'Rendering PDF pages…'}
+          </p>
+        )}
+        {importStatus.phase === 'error' && (
+          <p className="mt-2 text-sm text-red-600 dark:text-red-400">Could not read this PDF: {importStatus.reason}</p>
+        )}
+        {importStatus.phase === 'done' && (
+          <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+            Read {importStatus.pagesRead} of {importStatus.totalPageCount} page
+            {importStatus.totalPageCount === 1 ? '' : 's'}.{' '}
+            {suggestions.length === 0
+              ? 'No spending limits found.'
+              : `Found ${suggestions.length} candidate rule${suggestions.length === 1 ? '' : 's'} below.`}
+          </p>
+        )}
+        {suggestions.length > 0 && (
+          <ul className="mt-3 divide-y divide-neutral-200 dark:divide-neutral-800">
+            {suggestions.map((s, i) => (
+              <li key={`${s.category}-${i}`} className="flex items-center justify-between py-2 text-sm">
+                <span className="text-neutral-900 dark:text-neutral-100">
+                  {s.category} — {s.limitAmount} {settings.baseCurrency}
+                </span>
+                <span className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => addSuggestion(s)}
+                    className="rounded-md bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dismissSuggestion(s)}
+                    className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  >
+                    Dismiss
+                  </button>
+                </span>
               </li>
             ))}
           </ul>

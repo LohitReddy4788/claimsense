@@ -1,14 +1,22 @@
-import type { ExtractionResult } from '../../types/extraction'
+import type { ExtractionResult, PolicyExtractionResult } from '../../types/extraction'
 
 interface ExtractionRequest {
   requestId: string
   imageBlob: Blob
+  task?: 'receipt' | 'policy'
 }
 
 interface ExtractionResponse {
   requestId: string
   result: ExtractionResult
 }
+
+interface PolicyExtractionResponse {
+  requestId: string
+  policyResult: PolicyExtractionResult
+}
+
+type WorkerResponse = ExtractionResponse | PolicyExtractionResponse
 
 // Phase 16 finding (Error Handling + Retry): nothing here ever handled the
 // worker itself dying — a WebGPU context loss, an out-of-memory kill, or
@@ -27,11 +35,11 @@ interface ExtractionResponse {
 const CLIENT_TIMEOUT_MS = 11 * 60 * 1000 // slightly above the worker's own 10-minute internal cap
 
 let worker: Worker | null = null
-const pending = new Map<string, (result: ExtractionResult) => void>()
+const pending = new Map<string, (response: WorkerResponse) => void>()
 
 function failAllPending(reason: string): void {
   for (const resolve of pending.values()) {
-    resolve({ success: false, reason, latencyMs: 0 })
+    resolve({ requestId: '', result: { success: false, reason, latencyMs: 0 } })
   }
   pending.clear()
 }
@@ -41,12 +49,12 @@ function getWorker(): Worker {
     worker = new Worker(new URL('../../workers/extractionWorker.ts', import.meta.url), {
       type: 'module',
     })
-    worker.onmessage = (event: MessageEvent<ExtractionResponse>) => {
-      const { requestId, result } = event.data
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const { requestId } = event.data
       const resolve = pending.get(requestId)
       if (resolve) {
         pending.delete(requestId)
-        resolve(result)
+        resolve(event.data)
       }
     }
     worker.onerror = (event) => {
@@ -68,14 +76,15 @@ function getWorker(): Worker {
 // them CONTEND for the same compute, and all 3 ended up hitting the
 // per-call 10-minute timeout that any one of them would have comfortably
 // finished within if run alone. A user can reach this today by clicking
-// "Extract" on more than one receipt before the first finishes. Queuing
-// requests here — one in flight at a time — turns "3 requests that all
-// fail" into "3 requests that each succeed, just one after another",
-// which is what actually happens to compute time on this hardware
-// regardless of how many requests are in flight at once.
+// "Extract" on more than one receipt before the first finishes — and now
+// also by the policy-PDF-import flow, which sends one request per page.
+// Queuing requests here — one in flight at a time — turns "N requests
+// that all fail" into "N requests that each succeed, just one after
+// another", which is what actually happens to compute time on this
+// hardware regardless of how many requests are in flight at once.
 let sendQueue: Promise<unknown> = Promise.resolve()
 
-function sendToWorker(imageBlob: Blob): Promise<ExtractionResult> {
+function sendToWorker(imageBlob: Blob, task: 'receipt' | 'policy'): Promise<WorkerResponse> {
   return new Promise((resolve) => {
     const requestId = crypto.randomUUID()
 
@@ -85,19 +94,20 @@ function sendToWorker(imageBlob: Blob): Promise<ExtractionResult> {
     // every later request from being blocked forever by one bad one.
     const timeoutId = setTimeout(() => {
       if (pending.delete(requestId)) {
-        resolve({
-          success: false,
-          reason: `No response from the extraction worker after ${CLIENT_TIMEOUT_MS / 1000}s (it may have hung or crashed silently).`,
-          latencyMs: CLIENT_TIMEOUT_MS,
-        })
+        const reason = `No response from the extraction worker after ${CLIENT_TIMEOUT_MS / 1000}s (it may have hung or crashed silently).`
+        resolve(
+          task === 'policy'
+            ? { requestId, policyResult: { success: false, reason, latencyMs: CLIENT_TIMEOUT_MS } }
+            : { requestId, result: { success: false, reason, latencyMs: CLIENT_TIMEOUT_MS } },
+        )
       }
     }, CLIENT_TIMEOUT_MS)
 
-    pending.set(requestId, (result) => {
+    pending.set(requestId, (response) => {
       clearTimeout(timeoutId)
-      resolve(result)
+      resolve(response)
     })
-    const request: ExtractionRequest = { requestId, imageBlob }
+    const request: ExtractionRequest = { requestId, imageBlob, task }
     getWorker().postMessage(request)
   })
 }
@@ -111,10 +121,26 @@ function sendToWorker(imageBlob: Blob): Promise<ExtractionResult> {
  * queued and sent to the worker one at a time (see sendQueue above) rather
  * than fired concurrently. */
 export function extractReceipt(imageBlob: Blob): Promise<ExtractionResult> {
-  const task = sendQueue.then(() => sendToWorker(imageBlob))
+  const task = sendQueue.then(() => sendToWorker(imageBlob, 'receipt'))
   sendQueue = task.then(
     () => undefined,
     () => undefined,
   )
-  return task
+  return task.then((response) => (response as ExtractionResponse).result)
+}
+
+/** Policy-PDF import (Company Policies panel) — reads one rendered page of
+ * a policy document and returns candidate spending-limit rules for a
+ * human to individually confirm (never saved automatically; see
+ * PoliciesPanel). Shares the same worker, queue, and crash/timeout
+ * handling as extractReceipt() above — a policy-PDF import and a receipt
+ * extraction happening around the same time correctly take turns instead
+ * of contending. */
+export function extractPolicyPage(imageBlob: Blob): Promise<PolicyExtractionResult> {
+  const task = sendQueue.then(() => sendToWorker(imageBlob, 'policy'))
+  sendQueue = task.then(
+    () => undefined,
+    () => undefined,
+  )
+  return task.then((response) => (response as PolicyExtractionResponse).policyResult)
 }
