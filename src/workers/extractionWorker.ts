@@ -3,6 +3,32 @@ import { getVlm } from '../modules/ai/vlmRuntime'
 import { computeFieldConfidence } from '../modules/validation/receiptSchema'
 import type { ExtractionResult, ExtractedReceiptData } from '../types/extraction'
 
+// Zero-egress enforcement, worker-side (Phase 18). This worker is where the
+// real risk actually lives: it's what loads the ~511MB model and runs
+// ONNX Runtime Web, and static analysis of the built bundle turned up a
+// real cdn.jsdelivr.net fallback string inside onnxruntime-web's own code
+// (used only if its wasmPaths config is left unset). Browser-level network
+// monitoring tools were found NOT to capture requests made from inside a
+// Worker's own context at all during this same testing pass — a genuine
+// blind spot, not evidence of safety — so checking from OUTSIDE the worker
+// isn't good enough. This patches fetch from INSIDE the worker itself,
+// where it actually runs: same-origin and blob: requests pass through
+// unchanged, anything else is blocked outright and reported, turning a
+// silent leak into a loud, visible, prevented one instead of trusting that
+// nothing ever tries.
+const workerOrigin = self.location.origin
+const originalFetch = self.fetch.bind(self)
+self.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' || input instanceof URL ? input.toString() : input.url
+  const resolved = new URL(url, self.location.href).href
+  if (!resolved.startsWith(workerOrigin) && !resolved.startsWith('blob:') && !resolved.startsWith('data:')) {
+    const message = `Blocked a non-local network request from the extraction worker: ${resolved}`
+    console.error(message)
+    return Promise.reject(new Error(message))
+  }
+  return originalFetch(input, init)
+}) as typeof fetch
+
 const PROMPT =
   'Read this receipt and output ONLY a JSON object with these exact keys: ' +
   '"vendor" (string), "amount" (number, the total), "currency" (3-letter code or symbol), ' +
