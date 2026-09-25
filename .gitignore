@@ -18,7 +18,7 @@ public/models
 # Unrelated local tooling caches
 .sf/
 
-# Editor directories and files
+# Editor / local tooling directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
