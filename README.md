@@ -1,32 +1,62 @@
-# React + TypeScript + Vite
+# ClaimSense
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+AI-powered employee expense claim automation that runs entirely on-device.
 
-Currently, two official plugins are available:
+ClaimSense turns a folder of receipts into a submitted, human-reviewed
+expense claim without any network call for sensitive data. Receipt images
+and PDFs are ingested, extracted with an on-device vision-language model
+(with a fast OCR pass tried first), classified into spending categories,
+reconciled against locally stored travel requests, checked against a
+deterministic company policy engine, and built into a claim — all before a
+human reviews and approves it. Approved claims export to a real `.xlsx`
+spreadsheet.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+No receipt, extracted field, or personal data ever leaves the machine it
+was processed on. See [`docs/ZERO_EGRESS.md`](docs/ZERO_EGRESS.md) for how
+that's actually enforced, not just intended.
 
-## React Compiler
+## Running it
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Opens at `http://localhost:5173`. First run downloads nothing sensitive —
+the on-device model weights live under `public/models/` and are loaded
+same-origin.
+
+```bash
+npm run build    # production build (tsc + vite build)
+npm run preview  # serve the production build locally
+```
+
+## What's in here
+
+- **Upload Receipts** — ingest a PDF/JPEG/PNG, extract vendor/amount/date/
+  currency via OCR-first-then-AI-fallback.
+- **Policies** — company spending limits per category, a local currency
+  conversion table, and PDF-based policy import (suggestions only, never
+  auto-saved).
+- **Travel Requests** — approved trips a receipt can be reconciled against.
+- **Claims** — the built claim, its policy result, and the human review/
+  approve step.
+- **Audit Logs** — a SHA-256 hash-chained, tamper-evident record of every
+  action.
+
+## Docs
+
+- [`docs/architecture.svg`](docs/architecture.svg) — the verified system
+  architecture and data flow.
+- [`docs/ZERO_EGRESS.md`](docs/ZERO_EGRESS.md) — how zero data egress is
+  guaranteed.
+- [`PROJECT_LOG.md`](PROJECT_LOG.md) — the full development log: design
+  decisions, every phase's verification notes, and real bugs found and
+  fixed along the way.
+
+## Stack
+
+React 19 + TypeScript + Vite, Tailwind CSS, Dexie (IndexedDB) + OPFS for
+local storage, ONNX Runtime Web (WebGPU/WASM) for on-device inference,
+Tesseract.js for OCR, XState for pipeline orchestration, SheetJS for XLSX
+export.
