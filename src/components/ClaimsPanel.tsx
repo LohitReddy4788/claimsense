@@ -76,23 +76,41 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
       setMessage((m) => ({ ...m, [claimId]: 'Amount must be a number.' }))
       return
     }
-    await editClaim(claimId, {
-      vendor: buf.vendor.trim() === '' ? null : buf.vendor.trim(),
-      amount,
-      currency: buf.currency.trim() === '' ? null : buf.currency.trim(),
-      category: buf.category,
-    })
-    setMessage((m) => ({ ...m, [claimId]: 'Saved.' }))
-    await refresh()
+    // editClaim/db.claims.update can throw on a genuine storage error (quota,
+    // corruption) — without this, that failure was an unhandled rejection
+    // with nothing shown on screen, the same silent-failure class refresh()
+    // above is already guarded against.
+    try {
+      await editClaim(claimId, {
+        vendor: buf.vendor.trim() === '' ? null : buf.vendor.trim(),
+        amount,
+        currency: buf.currency.trim() === '' ? null : buf.currency.trim(),
+        category: buf.category,
+      })
+      setMessage((m) => ({ ...m, [claimId]: 'Saved.' }))
+      await refresh()
+    } catch (err) {
+      setMessage((m) => ({
+        ...m,
+        [claimId]: `Could not save: ${err instanceof Error ? err.message : String(err)}`,
+      }))
+    }
   }
 
   async function handleApprove(claimId: string) {
-    const result = await approveClaim(claimId)
-    setMessage((m) => ({
-      ...m,
-      [claimId]: result.success ? 'Approved.' : `Could not approve: ${result.reason}`,
-    }))
-    await refresh()
+    try {
+      const result = await approveClaim(claimId)
+      setMessage((m) => ({
+        ...m,
+        [claimId]: result.success ? 'Approved.' : `Could not approve: ${result.reason}`,
+      }))
+      await refresh()
+    } catch (err) {
+      setMessage((m) => ({
+        ...m,
+        [claimId]: `Could not approve: ${err instanceof Error ? err.message : String(err)}`,
+      }))
+    }
   }
 
   async function handleExport() {

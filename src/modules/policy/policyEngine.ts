@@ -94,6 +94,25 @@ export function evaluatePolicy(
     }
   }
 
+  // Defense-in-depth against a malformed stored limit (e.g. NaN from bad
+  // input that predates UI-level validation, or any future write path that
+  // doesn't validate as strictly as this one does). Found live: in
+  // JavaScript, `anything > NaN` is always false — a NaN limit wouldn't
+  // just fail to work, it would make every claim in that category silently
+  // PASS regardless of amount, forever, with no error and no review flag.
+  // Exactly the "invented"/silently-wrong outcome this module exists to
+  // prevent, applied symmetrically to the receipt-amount check already
+  // added for the same reason (gap-fix, negative/zero amounts, Phase 16).
+  if (!Number.isFinite(policy.limitAmount) || policy.limitAmount <= 0) {
+    return {
+      status: 'REVIEW',
+      reasonCode: 'POLICY_LIMIT_INVALID',
+      message: `The configured limit for "${category}" (${policy.limitAmount}) isn't a valid positive number — cannot evaluate against it.`,
+      convertedAmount: conversion.converted,
+      baseCurrency: settings.baseCurrency,
+    }
+  }
+
   if (conversion.converted > policy.limitAmount) {
     const code = `${category.toUpperCase()}_LIMIT_EXCEEDED`
     return {

@@ -18,6 +18,7 @@ export function PoliciesPanel() {
   const [limitAmount, setLimitAmount] = useState('')
   const [newCurrency, setNewCurrency] = useState('')
   const [newRate, setNewRate] = useState('')
+  const [policyError, setPolicyError] = useState<string | null>(null)
 
   // Suggestions from a policy-PDF import (Version A: read-only until a
   // human confirms). Kept entirely separate from `policies` (the real,
@@ -46,10 +47,21 @@ export function PoliciesPanel() {
 
   async function addPolicy() {
     if (!category.trim() || !limitAmount) return
+    const parsedLimit = Number(limitAmount)
+    // Found live: with no validation here, a malformed entry becomes NaN,
+    // and the Policy Engine's `amount > NaN` comparison is always false in
+    // JavaScript — silently PASSing every future claim in that category,
+    // forever, with no error shown anywhere. Reject bad input at the
+    // source instead of only catching it downstream.
+    if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+      setPolicyError('Limit must be a positive number.')
+      return
+    }
+    setPolicyError(null)
     const record: PolicyRecord = {
       policyId: generateId('pol'),
       category: category.trim(),
-      limitAmount: Number(limitAmount),
+      limitAmount: parsedLimit,
     }
     await db.policies.add(record)
     setCategory('')
@@ -268,6 +280,9 @@ export function PoliciesPanel() {
             Add rule
           </button>
         </div>
+        {policyError && (
+          <p className="mt-2 text-xs text-red-600 dark:text-red-400">{policyError}</p>
+        )}
         {policies.length === 0 ? (
           <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">No policy rules yet.</p>
         ) : (

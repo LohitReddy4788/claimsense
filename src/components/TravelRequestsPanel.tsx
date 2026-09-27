@@ -11,6 +11,7 @@ export function TravelRequestsPanel() {
   const [endDate, setEndDate] = useState('')
   const [approvalStatus, setApprovalStatus] =
     useState<TravelRequestRecord['approvalStatus']>('approved')
+  const [dateError, setDateError] = useState<string | null>(null)
 
   async function refresh() {
     const all = await db.travelRequests.toArray()
@@ -23,6 +24,16 @@ export function TravelRequestsPanel() {
 
   async function addRequest() {
     if (!employeeId.trim() || !destination.trim() || !startDate || !endDate) return
+    // Found live: nothing stopped an end date before the start date. Not a
+    // crash — reconcileTravel's date-range check (receiptDate >= start &&
+    // receiptDate <= end) just silently can never be satisfied by an
+    // inverted range, so the trip would never match any receipt with no
+    // error anywhere explaining why. Reject it here instead.
+    if (endDate < startDate) {
+      setDateError('End date must be on or after the start date.')
+      return
+    }
+    setDateError(null)
     const record: TravelRequestRecord = {
       requestId: generateId('trv'),
       employeeId: employeeId.trim(),
@@ -100,6 +111,7 @@ export function TravelRequestsPanel() {
           Add request
         </button>
       </div>
+      {dateError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{dateError}</p>}
 
       <p className="mt-6 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
         Travel requests ({requests.length})
