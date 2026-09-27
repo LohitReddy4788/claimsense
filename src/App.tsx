@@ -21,7 +21,7 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen w-screen bg-white text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
+    <div className="flex h-screen w-screen bg-black text-white">
       <Sidebar active={active} onSelect={setActive} />
       {/* All panels stay mounted (just hidden) rather than swapped in/out —
           switching tabs must not lose in-flight state, like a multi-minute

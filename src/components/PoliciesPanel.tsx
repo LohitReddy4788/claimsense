@@ -5,7 +5,7 @@ import {
   ListChecks,
   Loader2,
   CircleAlert,
-  Sparkles,
+  Cpu,
   Check,
   X,
   Landmark,
@@ -157,16 +157,14 @@ export function PoliciesPanel() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+      <section className="rounded-2xl border border-white/15 p-5">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-950/40">
-            <Landmark className="h-4 w-4 text-brand-600 dark:text-brand-400" strokeWidth={2} />
+          <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-white/40">
+            <Landmark className="h-4 w-4 text-white" strokeWidth={1.75} />
           </div>
           <div>
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-              Base currency &amp; conversion table
-            </p>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            <p className="text-sm font-semibold text-white">Base currency &amp; conversion table</p>
+            <p className="text-xs text-white/50">
               No live FX API (would violate zero-network) — rates are entered manually. A missing currency is
               flagged for review, never guessed.
             </p>
@@ -174,28 +172,28 @@ export function PoliciesPanel() {
         </div>
 
         <div className="mt-4 flex items-center gap-2">
-          <label className="text-sm text-neutral-600 dark:text-neutral-300">Base currency</label>
+          <label className="text-sm text-white/70">Base currency</label>
           <input
-            className="w-24 rounded-md border border-neutral-300 px-2 py-1.5 text-sm font-medium focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-24 rounded-md border border-white/25 bg-black px-2 py-1.5 text-sm font-medium text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40"
             value={settings.baseCurrency}
             onChange={(e) => saveBaseCurrency(e.target.value)}
           />
         </div>
 
-        <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-neutral-100 pt-4 dark:border-neutral-800">
+        <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-white/10 pt-4">
           <div>
-            <label className="block text-xs text-neutral-500 dark:text-neutral-400">Currency code</label>
+            <label className="block text-xs text-white/50">Currency code</label>
             <input
-              className="w-24 rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-24 rounded-md border border-white/25 bg-black px-2 py-1.5 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40"
               placeholder="EUR"
               value={newCurrency}
               onChange={(e) => setNewCurrency(e.target.value)}
             />
           </div>
           <div>
-            <label className="block text-xs text-neutral-500 dark:text-neutral-400">Rate → base</label>
+            <label className="block text-xs text-white/50">Rate → base</label>
             <input
-              className="w-28 rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-28 rounded-md border border-white/25 bg-black px-2 py-1.5 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40"
               placeholder="1.08"
               value={newRate}
               onChange={(e) => setNewRate(e.target.value)}
@@ -204,25 +202,22 @@ export function PoliciesPanel() {
           <button
             type="button"
             onClick={addRate}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white bg-white px-3.5 py-1.5 text-sm font-medium text-black transition-colors hover:bg-white/90"
           >
-            <Coins className="h-4 w-4" strokeWidth={2} />
+            <Coins className="h-4 w-4" strokeWidth={1.75} />
             Add rate
           </button>
         </div>
         {rateError && (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
-            <CircleAlert className="h-3.5 w-3.5" strokeWidth={2} />
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-white">
+            <CircleAlert className="h-3.5 w-3.5" strokeWidth={1.75} />
             {rateError}
           </p>
         )}
         {Object.keys(settings.rates).length > 0 && (
           <ul className="mt-3 flex flex-wrap gap-2">
             {Object.entries(settings.rates).map(([code, rate]) => (
-              <li
-                key={code}
-                className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-              >
+              <li key={code} className="rounded-full border border-white/25 px-3 py-1 text-xs font-medium text-white/80">
                 1 {code} = {rate} {settings.baseCurrency}
               </li>
             ))}
@@ -230,24 +225,22 @@ export function PoliciesPanel() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+      <section className="rounded-2xl border border-white/15 p-5">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-950/40">
-            <FileUp className="h-4 w-4 text-brand-600 dark:text-brand-400" strokeWidth={2} />
+          <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-white/40">
+            <FileUp className="h-4 w-4 text-white" strokeWidth={1.75} />
           </div>
           <div>
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-              Import limits from a policy PDF
-            </p>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            <p className="text-sm font-semibold text-white">Import limits from a policy PDF</p>
+            <p className="text-xs text-white/50">
               Reads up to {MAX_POLICY_PDF_PAGES} pages on-device — nothing is saved until you click Add on a
               specific row.
             </p>
           </div>
         </div>
 
-        <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-600 transition-colors hover:border-brand-300 hover:bg-brand-50/50 hover:text-brand-700 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-brand-800 dark:hover:bg-brand-950/30">
-          <FileUp className="h-4 w-4" strokeWidth={2} />
+        <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-white/30 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:border-white hover:bg-white/5">
+          <FileUp className="h-4 w-4" strokeWidth={1.75} />
           Choose a policy PDF
           <input
             type="file"
@@ -263,21 +256,21 @@ export function PoliciesPanel() {
         </label>
 
         {importStatus.phase === 'reading' && (
-          <p className="mt-3 flex items-center gap-1.5 text-sm text-neutral-500 dark:text-neutral-400">
-            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+          <p className="mt-3 flex items-center gap-1.5 text-sm text-white/60">
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
             {importStatus.pagesToRead > 0
               ? `Reading page ${importStatus.pageNumber} of ${importStatus.pagesToRead}… this can take several minutes per page on-device.`
               : 'Rendering PDF pages…'}
           </p>
         )}
         {importStatus.phase === 'error' && (
-          <p className="mt-3 flex items-center gap-1.5 text-sm text-red-600 dark:text-red-400">
-            <CircleAlert className="h-4 w-4 flex-none" strokeWidth={2} />
+          <p className="mt-3 flex items-center gap-1.5 text-sm text-white">
+            <CircleAlert className="h-4 w-4 flex-none" strokeWidth={1.75} />
             Could not read this PDF: {importStatus.reason}
           </p>
         )}
         {importStatus.phase === 'done' && (
-          <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+          <p className="mt-3 text-sm text-white/60">
             Read {importStatus.pagesRead} of {importStatus.totalPageCount} page
             {importStatus.totalPageCount === 1 ? '' : 's'}.{' '}
             {suggestions.length === 0
@@ -290,27 +283,27 @@ export function PoliciesPanel() {
             {suggestions.map((s, i) => (
               <li
                 key={`${s.category}-${i}`}
-                className="flex items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50/50 px-3.5 py-2.5 text-sm dark:border-brand-900 dark:bg-brand-950/30"
+                className="flex items-center justify-between gap-3 rounded-xl border border-white/25 px-3.5 py-2.5 text-sm"
               >
-                <span className="flex items-center gap-2 text-neutral-800 dark:text-neutral-100">
-                  <Sparkles className="h-3.5 w-3.5 flex-none text-brand-500" strokeWidth={2} />
+                <span className="flex items-center gap-2 text-white">
+                  <Cpu className="h-3.5 w-3.5 flex-none text-white/60" strokeWidth={1.75} />
                   <span className="font-medium">{s.category}</span> — {s.limitAmount} {settings.baseCurrency}
                 </span>
                 <span className="flex flex-none gap-1.5">
                   <button
                     type="button"
                     onClick={() => addSuggestion(s)}
-                    className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-700"
+                    className="inline-flex items-center gap-1 rounded-md border border-white bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-white/90"
                   >
-                    <Check className="h-3 w-3" strokeWidth={2.5} />
+                    <Check className="h-3 w-3" strokeWidth={2.25} />
                     Add
                   </button>
                   <button
                     type="button"
                     onClick={() => dismissSuggestion(s)}
-                    className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                    className="inline-flex items-center gap-1 rounded-md border border-white/30 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:border-white hover:bg-white/5"
                   >
-                    <X className="h-3 w-3" strokeWidth={2.5} />
+                    <X className="h-3 w-3" strokeWidth={2.25} />
                     Dismiss
                   </button>
                 </span>
@@ -320,21 +313,19 @@ export function PoliciesPanel() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+      <section className="rounded-2xl border border-white/15 p-5">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-950/40">
-            <ListChecks className="h-4 w-4 text-brand-600 dark:text-brand-400" strokeWidth={2} />
+          <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-white/40">
+            <ListChecks className="h-4 w-4 text-white" strokeWidth={1.75} />
           </div>
-          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-            Category spending limits ({policies.length})
-          </p>
+          <p className="text-sm font-semibold text-white">Category spending limits ({policies.length})</p>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-neutral-100 pt-4 dark:border-neutral-800">
+        <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-white/10 pt-4">
           <div>
-            <label className="block text-xs text-neutral-500 dark:text-neutral-400">Category</label>
+            <label className="block text-xs text-white/50">Category</label>
             <select
-              className="w-40 rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-40 rounded-md border border-white/25 bg-black px-2 py-1.5 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
             >
@@ -346,11 +337,9 @@ export function PoliciesPanel() {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-neutral-500 dark:text-neutral-400">
-              Limit ({settings.baseCurrency})
-            </label>
+            <label className="block text-xs text-white/50">Limit ({settings.baseCurrency})</label>
             <input
-              className="w-28 rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-28 rounded-md border border-white/25 bg-black px-2 py-1.5 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40"
               placeholder="200"
               value={limitAmount}
               onChange={(e) => setLimitAmount(e.target.value)}
@@ -359,26 +348,26 @@ export function PoliciesPanel() {
           <button
             type="button"
             onClick={addPolicy}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm shadow-brand-600/25 transition-colors hover:bg-brand-700"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white bg-white px-3.5 py-1.5 text-sm font-medium text-black transition-colors hover:bg-white/90"
           >
-            <ListChecks className="h-4 w-4" strokeWidth={2} />
+            <ListChecks className="h-4 w-4" strokeWidth={1.75} />
             Add rule
           </button>
         </div>
         {policyError && (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
-            <CircleAlert className="h-3.5 w-3.5" strokeWidth={2} />
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-white">
+            <CircleAlert className="h-3.5 w-3.5" strokeWidth={1.75} />
             {policyError}
           </p>
         )}
         {policies.length === 0 ? (
-          <p className="mt-4 text-sm text-neutral-500 dark:text-neutral-400">No policy rules yet.</p>
+          <p className="mt-4 text-sm text-white/50">No policy rules yet.</p>
         ) : (
-          <ul className="mt-4 divide-y divide-neutral-100 dark:divide-neutral-800">
+          <ul className="mt-4 divide-y divide-white/10">
             {policies.map((p) => (
               <li key={p.policyId} className="flex items-center justify-between py-2.5 text-sm">
-                <span className="font-medium text-neutral-900 dark:text-neutral-100">{p.category}</span>
-                <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                <span className="font-medium text-white">{p.category}</span>
+                <span className="rounded-full border border-white/25 px-2.5 py-0.5 text-xs font-medium text-white/70">
                   {p.limitAmount} {settings.baseCurrency}
                 </span>
               </li>

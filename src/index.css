@@ -1,35 +1,17 @@
 @import "tailwindcss";
 
-@theme {
-  --color-brand-50: #eef2ff;
-  --color-brand-100: #e0e7ff;
-  --color-brand-200: #c7d2fe;
-  --color-brand-300: #a5b4fc;
-  --color-brand-400: #818cf8;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
-  --color-brand-800: #3730a3;
-  --color-brand-900: #312e81;
-  --color-brand-950: #1e1b4b;
-}
-
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
+  background: #000000;
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-neutral-300) transparent;
-}
-@media (prefers-color-scheme: dark) {
-  * {
-    scrollbar-color: var(--color-neutral-700) transparent;
-  }
+  scrollbar-color: var(--color-neutral-700) transparent;
 }
 
 @keyframes fade-in {
