@@ -19,6 +19,7 @@ export function PoliciesPanel() {
   const [newCurrency, setNewCurrency] = useState('')
   const [newRate, setNewRate] = useState('')
   const [policyError, setPolicyError] = useState<string | null>(null)
+  const [rateError, setRateError] = useState<string | null>(null)
 
   // Suggestions from a policy-PDF import (Version A: read-only until a
   // human confirms). Kept entirely separate from `policies` (the real,
@@ -77,9 +78,19 @@ export function PoliciesPanel() {
 
   async function addRate() {
     if (!newCurrency.trim() || !newRate) return
+    const parsedRate = Number(newRate)
+    // Same bug class as the policy-limit fix, same reason: a malformed or
+    // zero rate makes every future conversion for that currency come out
+    // as 0/NaN, which the Policy Engine's `> limit` check reads as always
+    // within limits — silently disabling enforcement for that currency.
+    if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
+      setRateError('Rate must be a positive number.')
+      return
+    }
+    setRateError(null)
     const updated: PolicySettingsRecord = {
       ...settings,
-      rates: { ...settings.rates, [newCurrency.trim().toUpperCase()]: Number(newRate) },
+      rates: { ...settings.rates, [newCurrency.trim().toUpperCase()]: parsedRate },
     }
     await db.policySettings.put(updated)
     setSettings(updated)
@@ -167,6 +178,7 @@ export function PoliciesPanel() {
             Add rate
           </button>
         </div>
+        {rateError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{rateError}</p>}
         {Object.keys(settings.rates).length > 0 && (
           <ul className="mt-3 text-sm text-neutral-600 dark:text-neutral-300">
             {Object.entries(settings.rates).map(([code, rate]) => (

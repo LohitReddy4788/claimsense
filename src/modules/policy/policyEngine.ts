@@ -18,6 +18,14 @@ function convertToBase(
   )
   if (!rateKey) return null
   const rate = settings.rates[rateKey]
+  // Same failure class as the policy-limit bug, found the same way while
+  // auditing the other place a human types a raw number into this system:
+  // a malformed or zero rate (NaN, 0, or negative) makes `amount * rate`
+  // become 0, NaN, or negative — and `that > limitAmount` is then always
+  // false, silently PASSing every claim in that currency forever. Treated
+  // the same way missing-conversion already is: no conversion possible,
+  // not a fabricated zero.
+  if (!Number.isFinite(rate) || rate <= 0) return null
   return { converted: amount * rate, usedRate: rate }
 }
 
