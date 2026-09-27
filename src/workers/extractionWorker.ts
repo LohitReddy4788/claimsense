@@ -34,11 +34,22 @@ self.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   return originalFetch(input, init)
 }) as typeof fetch
 
+// The "amount" clause below is deliberately more directive than the other
+// fields — Phase 5's own measurement found the model got vendor/date right
+// 3/3 times but the total amount right 0/3, the one clearly weak field.
+// Giving it explicit anchors (the label words receipts actually use, plus
+// a concrete fallback rule) is the documented next lever to pull, per
+// PROJECT_LOG.md's own note that this was "worth a future prompt pass."
 const RECEIPT_PROMPT =
-  'Read this receipt and output ONLY a JSON object with these exact keys: ' +
-  '"vendor" (string), "amount" (number, the total), "currency" (3-letter code or symbol), ' +
+  'Read this receipt and output ONLY a JSON object with EXACTLY these 5 keys, no others: ' +
+  '"vendor" (string, the business name), ' +
+  '"amount" (number, the FINAL TOTAL amount charged — look for a line labeled ' +
+  '"Total", "Amount Due", "Grand Total", or "Balance Due"; if none is labeled that way, ' +
+  'use the largest currency amount printed on the receipt), ' +
+  '"currency" (3-letter code or symbol), ' +
   '"date" (string, as printed), "lineItems" (array of {"description": string, "amount": number}). ' +
-  'Use null for any field you cannot read. Output nothing except the JSON object.'
+  'Use null for any field you cannot read. Do not add extra keys or nested objects. ' +
+  'Output nothing except that one JSON object, as compactly as possible.'
 
 const POLICY_PROMPT =
   'This is a page from a company expense policy document. Find every spending limit ' +
@@ -53,7 +64,15 @@ const POLICY_PROMPT =
 // than the one-time model load. A receipt's JSON output doesn't need 256
 // tokens of room — 128 is enough for vendor/amount/currency/date + a
 // handful of line items, and roughly halves generation time.
-const MAX_NEW_TOKENS = 128
+// Raised from 128 after a live test (2026-09-27) showed the sharpened
+// receipt prompt below can make the model verbose enough (e.g. inventing
+// an extra unrequested nested object) to run past 128 tokens mid-JSON,
+// turning an otherwise-correct answer into a truncated-JSON failure. Per
+// Phase 5's own measurement, token count is NOT the dominant cost here
+// (halving it 256->128 only cut latency ~10%) — session/load overhead
+// dominates — so this buys real headroom against truncation for a small
+// latency cost, not a proportional one.
+const MAX_NEW_TOKENS = 200
 
 // Observed real-hardware latency ranged 213-241s across earlier tests, then
 // one run during Phase 10 testing ran past 440s with no error and no sign
@@ -82,19 +101,51 @@ function extractJsonBlock(text: string): string | null {
   return text.slice(start, end + 1)
 }
 
+// Found live (2026-09-27): the model reliably gets the right VALUE but not
+// always the right JSON type or shape for it — despite the prompt asking
+// for "amount (number)", a real run returned {"amount": "44.28 USD"}, a
+// string with the currency embedded rather than a bare number. The exact
+// same class of bug already found and fixed in the policy-PDF-import
+// worker path (limitAmount as a quoted string) — this predicted the
+// receipt path could hit the same failure, and it did. A strict
+// `typeof === 'number'` check would silently discard a correct answer as
+// if nothing had been read at all, so this extracts the numeric portion
+// from a string value instead of rejecting it outright.
+function coerceAmount(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const match = value.match(/-?\d+(?:\.\d+)?/)
+    if (match) {
+      const n = parseFloat(match[0])
+      if (Number.isFinite(n)) return n
+    }
+  }
+  return null
+}
+
+// The same run also omitted the "currency" key entirely — the model had
+// folded it into the amount string ("44.28 USD") instead. This recovers
+// it from there ONLY as a fallback when the model didn't provide a
+// currency field on its own; never overrides a real currency value.
+function currencyFromAmountString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const match = value.match(/\b(USD|EUR|GBP|INR)\b|[$€£₹]/i)
+  return match ? match[0].toUpperCase() : null
+}
+
 function normalizeExtracted(raw: unknown): ExtractedReceiptData {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const lineItemsRaw = Array.isArray(obj.lineItems) ? obj.lineItems : []
   return {
     vendor: typeof obj.vendor === 'string' ? obj.vendor : null,
-    amount: typeof obj.amount === 'number' ? obj.amount : null,
-    currency: typeof obj.currency === 'string' ? obj.currency : null,
+    amount: coerceAmount(obj.amount),
+    currency: typeof obj.currency === 'string' ? obj.currency : currencyFromAmountString(obj.amount),
     date: typeof obj.date === 'string' ? obj.date : null,
     lineItems: lineItemsRaw
       .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
       .map((item) => ({
         description: typeof item.description === 'string' ? item.description : '',
-        amount: typeof item.amount === 'number' ? item.amount : null,
+        amount: coerceAmount(item.amount),
       })),
   }
 }

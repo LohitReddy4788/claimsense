@@ -26,6 +26,16 @@ const CURRENCY_PATTERN = /\b(USD|EUR|GBP|INR)\b|[$€£₹]/
 const PHONE_LIKE_PATTERN = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/
 const METADATA_LABEL_PATTERN = /^(tel|phone|fax|date|time|server|table|order|receipt|invoice)\b[:#]?/i
 
+// Found live (2026-09-27) testing a second stylized-font case, distinct
+// from the phone-number one above: when the real vendor title is a script/
+// cursive font Tesseract reads as nothing at all, the search can fall
+// through past the excluded metadata lines and land on a genuine line
+// item ("Grilled Salmon 24.00") — which matches neither exclusion pattern,
+// so it gets accepted as the vendor at a false 100% confidence, same root
+// failure as the phone-number case, just a different line shape. A real
+// vendor name never ends in a receipt-formatted price; a line item does.
+const LINE_ITEM_LIKE_PATTERN = /\d+[.,]\d{2}\s*$/
+
 /** Heuristic field extraction from raw OCR text — deliberately simple
  * regexes, not an LLM. Vendor is a guess (first line that doesn't look
  * like a number, phone, or a labeled metadata field); amount picks the
@@ -54,8 +64,14 @@ function parseReceiptText(text: string): ExtractedReceiptData {
   const vendor =
     lines
       .slice(0, VENDOR_SEARCH_WINDOW)
-      .find((l) => !/^\d/.test(l) && l.length > 2 && !PHONE_LIKE_PATTERN.test(l) && !METADATA_LABEL_PATTERN.test(l)) ??
-    null
+      .find(
+        (l) =>
+          !/^\d/.test(l) &&
+          l.length > 2 &&
+          !PHONE_LIKE_PATTERN.test(l) &&
+          !METADATA_LABEL_PATTERN.test(l) &&
+          !LINE_ITEM_LIKE_PATTERN.test(l),
+      ) ?? null
 
   const amounts = [...text.matchAll(AMOUNT_PATTERN)]
     .map((m) => parseFloat(m[1].replace(',', '.')))
@@ -112,6 +128,18 @@ export async function runOcrFallback(imageBlob: Blob): Promise<ExtractionResult>
       latencyMs,
     }
   } catch (e) {
+    // Previously only a worker-INITIALIZATION failure self-healed (the
+    // .catch() on workerPromise above). A crash during recognize() itself
+    // left the same now-corrupted worker cached, so every future call kept
+    // retrying the same broken instance — the documented "needs a page
+    // reload" limitation. Mirrors the extraction Worker's own crash
+    // recovery (terminate + drop the reference + lazily recreate next
+    // call) so ANY failure here, not just an init failure, self-heals.
+    if (workerPromise) {
+      const broken = workerPromise
+      workerPromise = null
+      broken.then((w) => w.terminate()).catch(() => {})
+    }
     return {
       success: false,
       reason: `OCR fallback failed: ${e instanceof Error ? e.message : String(e)}`,

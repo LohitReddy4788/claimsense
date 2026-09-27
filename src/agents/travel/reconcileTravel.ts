@@ -63,7 +63,7 @@ export function reconcileTravel(
   const text = receiptText(data)
   const receiptDate = parseDate(data.date)
 
-  let best: { trip: TravelRequestRecord; score: number } | null = null
+  const scored: { trip: TravelRequestRecord; score: number }[] = []
   for (const trip of employeeTrips) {
     const start = parseDate(trip.startDate)
     const end = parseDate(trip.endDate)
@@ -71,17 +71,35 @@ export function reconcileTravel(
 
     const dScore = dateScore(receiptDate, start, end)
     const destScore = destinationScore(text, trip.destination)
-    const score = dScore * 0.6 + destScore * 0.4
-
-    if (!best || score > best.score) best = { trip, score }
+    scored.push({ trip, score: dScore * 0.6 + destScore * 0.4 })
   }
 
-  if (!best) {
+  if (scored.length === 0) {
     return {
       status: 'UNMATCHED',
       travelRequestId: null,
       score: 0,
       reason: `Employee ${employeeId} has approved trips, but none had usable date ranges to compare against.`,
+    }
+  }
+
+  const topScore = Math.max(...scored.map((s) => s.score))
+  const topCandidates = scored.filter((s) => s.score === topScore)
+  const best = topCandidates[0]
+
+  // Mirrors the Category Classifier's own tie handling (Phase 7): two
+  // overlapping approved trips for the same employee scoring identically
+  // is a real, if rare, edge case — picking one silently would be exactly
+  // the kind of unearned guess this system otherwise never makes. Only
+  // flagged when the tie is itself at least a plausible match; two trips
+  // both scoring 0 aren't "tied for best," they're both just wrong.
+  if (topCandidates.length > 1 && topScore >= REVIEW_THRESHOLD) {
+    const names = topCandidates.map((c) => c.trip.destination).join(', ')
+    return {
+      status: 'REVIEW',
+      travelRequestId: null,
+      score: topScore,
+      reason: `Ambiguous — tied equally between approved trips to ${names}. A human needs to pick the right one.`,
     }
   }
 
