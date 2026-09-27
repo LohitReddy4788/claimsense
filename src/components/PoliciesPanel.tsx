@@ -3,6 +3,7 @@ import { db } from '../modules/storage/db'
 import { generateId } from '../utils/id'
 import type { PolicyRecord, PolicySettingsRecord } from '../types/records'
 import { extractPolicyFromPdf, MAX_POLICY_PDF_PAGES } from '../agents/policy-import/extractPolicyFromPdf'
+import { EXPENSE_CATEGORIES } from '../types/category'
 import type { PolicyRuleCandidate } from '../types/extraction'
 
 const DEFAULT_SETTINGS: PolicySettingsRecord = {
@@ -14,7 +15,15 @@ const DEFAULT_SETTINGS: PolicySettingsRecord = {
 export function PoliciesPanel() {
   const [policies, setPolicies] = useState<PolicyRecord[]>([])
   const [settings, setSettings] = useState<PolicySettingsRecord>(DEFAULT_SETTINGS)
-  const [category, setCategory] = useState('')
+  // A dropdown constrained to exactly what classifyCategory.ts can ever
+  // produce — not free text. Found live: the old text field's own
+  // placeholder ("Hotel") wasn't even a real category (the classifier
+  // only ever assigns "Lodging"), so following that hint created a policy
+  // rule that could never match a single real claim, silently. A rule
+  // typed for any category the classifier can't produce has the same
+  // problem — constraining the input to the classifier's own vocabulary
+  // is what actually fixes it, not just tidies it.
+  const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0])
   const [limitAmount, setLimitAmount] = useState('')
   const [newCurrency, setNewCurrency] = useState('')
   const [newRate, setNewRate] = useState('')
@@ -47,7 +56,7 @@ export function PoliciesPanel() {
   }, [])
 
   async function addPolicy() {
-    if (!category.trim() || !limitAmount) return
+    if (!category || !limitAmount) return
     const parsedLimit = Number(limitAmount)
     // Found live: with no validation here, a malformed entry becomes NaN,
     // and the Policy Engine's `amount > NaN` comparison is always false in
@@ -61,11 +70,13 @@ export function PoliciesPanel() {
     setPolicyError(null)
     const record: PolicyRecord = {
       policyId: generateId('pol'),
-      category: category.trim(),
+      category,
       limitAmount: parsedLimit,
     }
     await db.policies.add(record)
-    setCategory('')
+    // Category is a dropdown now, not free text — leaving the selection
+    // as-is (rather than resetting) is the better default for adding
+    // several limits in a row without re-picking the category each time.
     setLimitAmount('')
     await refresh()
   }
@@ -266,12 +277,17 @@ export function PoliciesPanel() {
         <div className="mt-3 flex items-end gap-2">
           <div>
             <label className="block text-xs text-neutral-500 dark:text-neutral-400">Category</label>
-            <input
+            <select
               className="w-40 rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-              placeholder="Hotel"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-            />
+            >
+              {EXPENSE_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-xs text-neutral-500 dark:text-neutral-400">
