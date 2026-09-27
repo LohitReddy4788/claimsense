@@ -80,7 +80,9 @@ const MAX_NEW_TOKENS = 200
 // hang, but that gap is exactly the risk a missing timeout leaves open:
 // with no cap, the UI would show "Running…" forever if generate() ever did
 // truly hang. Set generously above every observed run, not tuned to cut
-// off slow-but-legitimate ones.
+// off slow-but-legitimate ones. A 2026-09-27 measurement (see
+// vlmRuntime.ts and PROJECT_LOG.md) put a single warm-model call as high
+// as 386s, still comfortably under this cap.
 const GENERATION_TIMEOUT_MS = 600_000 // 10 minutes
 
 class ExtractionTimeoutError extends Error {}

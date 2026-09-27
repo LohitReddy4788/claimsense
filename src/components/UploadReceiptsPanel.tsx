@@ -400,7 +400,7 @@ export function UploadReceiptsPanel() {
                                         <span className="text-amber-600 dark:text-amber-400">
                                           {' '}
                                           · CPU fallback (WASM) — no GPU acceleration detected on this device,
-                                          which is why this took longer than the ~4 minute baseline
+                                          which is why this took noticeably longer than usual
                                         </span>
                                       )}
                                       {validated.vlmResult.device === 'webgpu' && ' · GPU-accelerated (WebGPU)'}

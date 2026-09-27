@@ -14,6 +14,15 @@ env.allowRemoteModels = false
 env.allowLocalModels = true
 env.localModelPath = '/models/'
 
+// smolvlm-256m-instruct was tried and reverted (2026-09-27) — see
+// PROJECT_LOG.md for the full measurement. Short version: it was
+// sometimes meaningfully faster (171s vs a 386s baseline) but on two
+// separate real test receipts it failed to produce usable structured
+// output at all — one run invented an entirely different JSON schema
+// the prompt never asked for, the other degenerated into a malformed,
+// repeating hallucination loop that never even closed valid JSON. A
+// faster pipeline that can't reliably extract data is strictly worse
+// than a slower one that works, so this stays on the 500M model.
 const MODEL_ID = 'smolvlm-500m-instruct'
 
 const DTYPE_CONFIG = {
