@@ -55,6 +55,12 @@ export interface ClaimRecord {
   /** claimId of the existing claim this one appears to duplicate, if any
    * (gap-fix #1: exact file hash OR normalized vendor+date+amount+currency). */
   duplicateOfClaimId: string | null
+  /** Non-null when the extracted line items sum to more than the claimed
+   * total — a receipt's line items can legitimately sum to LESS than the
+   * total (tax/tip often aren't itemized), but never legitimately more.
+   * One deterministic, honest signal toward a doctored or misread total;
+   * not a fraud verdict, just a reason to route to human review. */
+  lineItemReviewReason: string | null
   status: 'draft' | 'review' | 'approved'
   createdAt: string
   /** Set only when a human explicitly approves via the Review & Submit

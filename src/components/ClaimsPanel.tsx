@@ -176,6 +176,11 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                     ⚠ Possible duplicate of claim {c.duplicateOfClaimId}
                   </p>
                 )}
+                {c.lineItemReviewReason && (
+                  <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                    ⚠ {c.lineItemReviewReason}
+                  </p>
+                )}
 
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <label className="text-xs text-neutral-500 dark:text-neutral-400">

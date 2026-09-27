@@ -405,6 +405,7 @@ export function UploadReceiptsPanel() {
                                             claim: {claim.status === 'draft' ? '✓ draft' : '⚠ needs review'}
                                             {claim.duplicateOfClaimId &&
                                               ` — possible duplicate of ${claim.duplicateOfClaimId}`}
+                                            {claim.lineItemReviewReason && ` — ${claim.lineItemReviewReason}`}
                                           </p>
                                         )
                                       })()}
