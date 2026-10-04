@@ -48,6 +48,26 @@ const LINE_ITEM_LIKE_PATTERN = /\d+[.,]\d{2}\s*$/
  * gate only checks presence, not plausibility, so a wrong-but-non-null
  * guess can still slip through at 100% "confidence"; picking a better
  * candidate line here is the real defense against that. */
+// Found live: a photo-quality receipt came back "100% confidence" with the
+// year read as 3036 and stray "i" / ". : >" glyphs around the vendor.
+// Confidence only checks presence, so an implausible year is treated as
+// not-read (null) instead — this routes to the AI fallback or human review
+// rather than to a clean draft carrying a wrong date.
+function isPlausibleDate(value: string): boolean {
+  const year = value.match(/\b(\d{4})\b/)
+  if (!year) return true
+  const y = Number(year[1])
+  return y >= 2000 && y <= new Date().getFullYear() + 1
+}
+
+function cleanOcrNoise(value: string): string {
+  return value
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .replace(/[^A-Za-z0-9)]+$/, '')
+    .replace(/^[a-z]\s+(?=[A-Z])/, '')
+    .trim()
+}
+
 function parseReceiptText(text: string): ExtractedReceiptData {
   const lines = text
     .split('\n')
@@ -62,7 +82,7 @@ function parseReceiptText(text: string): ExtractedReceiptData {
   // a line-item description and confidently mislabel it as the vendor,
   // which is a worse failure than admitting there's no usable candidate.
   const VENDOR_SEARCH_WINDOW = 5
-  const vendor =
+  const rawVendor =
     lines
       .slice(0, VENDOR_SEARCH_WINDOW)
       .find(
@@ -73,6 +93,7 @@ function parseReceiptText(text: string): ExtractedReceiptData {
           !METADATA_LABEL_PATTERN.test(l) &&
           !LINE_ITEM_LIKE_PATTERN.test(l),
       ) ?? null
+  const vendor = rawVendor ? cleanOcrNoise(rawVendor) || null : null
 
   const amounts = [...text.matchAll(AMOUNT_PATTERN)]
     .map((m) => parseFloat(m[1].replace(',', '.')))
@@ -80,7 +101,7 @@ function parseReceiptText(text: string): ExtractedReceiptData {
   const amount = amounts.length > 0 ? Math.max(...amounts) : null
 
   const dateMatch = text.match(DATE_PATTERN)
-  const date = dateMatch ? dateMatch[1] : null
+  const date = dateMatch && isPlausibleDate(dateMatch[1]) ? dateMatch[1] : null
 
   const currencyMatch = text.match(CURRENCY_PATTERN)
   const currency = normalizeCurrency(currencyMatch ? currencyMatch[0] : null)
