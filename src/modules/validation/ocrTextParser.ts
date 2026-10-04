@@ -1,5 +1,6 @@
 import { createWorker } from 'tesseract.js'
 import { computeFieldConfidence } from './receiptSchema'
+import { normalizeCurrency } from '../../utils/currency'
 import type { ExtractionResult, ExtractedReceiptData } from '../../types/extraction'
 
 // Bundled locally (public/tesseract/) rather than Tesseract.js's CDN
@@ -82,7 +83,7 @@ function parseReceiptText(text: string): ExtractedReceiptData {
   const date = dateMatch ? dateMatch[1] : null
 
   const currencyMatch = text.match(CURRENCY_PATTERN)
-  const currency = currencyMatch ? currencyMatch[0] : null
+  const currency = normalizeCurrency(currencyMatch ? currencyMatch[0] : null)
 
   return { vendor, amount, currency, date, lineItems: [] }
 }

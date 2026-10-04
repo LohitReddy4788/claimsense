@@ -1,6 +1,7 @@
 import { RawImage, type Tensor } from '@huggingface/transformers'
 import { getVlm } from '../modules/ai/vlmRuntime'
 import { computeFieldConfidence } from '../modules/validation/receiptSchema'
+import { normalizeCurrency } from '../utils/currency'
 import type {
   ExtractionResult,
   ExtractedReceiptData,
@@ -141,7 +142,9 @@ function normalizeExtracted(raw: unknown): ExtractedReceiptData {
   return {
     vendor: typeof obj.vendor === 'string' ? obj.vendor : null,
     amount: coerceAmount(obj.amount),
-    currency: typeof obj.currency === 'string' ? obj.currency : currencyFromAmountString(obj.amount),
+    currency: normalizeCurrency(
+      typeof obj.currency === 'string' ? obj.currency : currencyFromAmountString(obj.amount),
+    ),
     date: typeof obj.date === 'string' ? obj.date : null,
     lineItems: lineItemsRaw
       .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')

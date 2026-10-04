@@ -2,6 +2,7 @@ import type { ExtractedReceiptData } from '../../types/extraction'
 import type { ExpenseCategory } from '../../types/category'
 import type { PolicyRecord, PolicySettingsRecord } from '../../types/records'
 import type { PolicyCheckResult } from '../../types/policy'
+import { normalizeCurrency } from '../../utils/currency'
 
 function convertToBase(
   amount: number,
@@ -78,7 +79,7 @@ export function evaluatePolicy(
     }
   }
 
-  const conversion = convertToBase(data.amount, data.currency, settings)
+  const conversion = convertToBase(data.amount, normalizeCurrency(data.currency) ?? data.currency, settings)
   if (!conversion) {
     // Gap-fix #2, applied exactly as decided: no live FX API, and an
     // unmapped currency is flagged for review — never guessed.
