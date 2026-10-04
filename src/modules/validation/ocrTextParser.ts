@@ -131,6 +131,82 @@ async function getTesseractWorker() {
   return workerPromise
 }
 
+// Tilted, soft or low-contrast photos are where Tesseract slips (found live:
+// a year read as 3036). Grayscale + contrast stretch + Otsu binarisation on
+// an upscaled copy recovers many of these in seconds, so fewer receipts fall
+// through to the multi-minute on-device model. Only used as a second attempt.
+const MIN_OCR_WIDTH = 1400
+
+async function enhanceForOcr(imageBlob: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(imageBlob)
+  const scale = bitmap.width < MIN_OCR_WIDTH ? Math.min(3, MIN_OCR_WIDTH / bitmap.width) : 1
+  const w = Math.round(bitmap.width * scale)
+  const h = Math.round(bitmap.height * scale)
+  const canvas = new OffscreenCanvas(w, h)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('No 2D canvas context available for OCR preprocessing.')
+  ctx.drawImage(bitmap, 0, 0, w, h)
+  bitmap.close()
+
+  const img = ctx.getImageData(0, 0, w, h)
+  const px = img.data
+  const gray = new Uint8ClampedArray(w * h)
+  const hist = new Array<number>(256).fill(0)
+  for (let i = 0, g = 0; i < px.length; i += 4, g++) {
+    const v = Math.round(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2])
+    gray[g] = v
+    hist[v]++
+  }
+
+  // Stretch between the 2nd and 98th percentile so a washed-out photo uses
+  // the full range before thresholding.
+  const total = w * h
+  let acc = 0
+  let lo = 0
+  let hi = 255
+  for (let v = 0; v < 256; v++) {
+    acc += hist[v]
+    if (acc >= total * 0.02) { lo = v; break }
+  }
+  acc = 0
+  for (let v = 255; v >= 0; v--) {
+    acc += hist[v]
+    if (acc >= total * 0.02) { hi = v; break }
+  }
+  const range = Math.max(1, hi - lo)
+  const stretchedHist = new Array<number>(256).fill(0)
+  for (let i = 0; i < gray.length; i++) {
+    const s = Math.max(0, Math.min(255, Math.round(((gray[i] - lo) * 255) / range)))
+    gray[i] = s
+    stretchedHist[s]++
+  }
+
+  // Otsu: pick the threshold that best separates ink from paper.
+  let sumAll = 0
+  for (let v = 0; v < 256; v++) sumAll += v * stretchedHist[v]
+  let sumB = 0
+  let wB = 0
+  let best = 0
+  let threshold = 128
+  for (let v = 0; v < 256; v++) {
+    wB += stretchedHist[v]
+    if (wB === 0) continue
+    const wF = total - wB
+    if (wF === 0) break
+    sumB += v * stretchedHist[v]
+    const between = wB * wF * (sumB / wB - (sumAll - sumB) / wF) ** 2
+    if (between > best) { best = between; threshold = v }
+  }
+
+  for (let i = 0, g = 0; i < px.length; i += 4, g++) {
+    const out = gray[g] > threshold ? 255 : 0
+    px[i] = px[i + 1] = px[i + 2] = out
+    px[i + 3] = 255
+  }
+  ctx.putImageData(img, 0, 0)
+  return canvas.convertToBlob({ type: 'image/png' })
+}
+
 /** OCR fallback (Validation module) — runs when the VLM extraction failed
  * or scored low confidence. Never throws: an OCR failure becomes
  * success:false with a reason, same contract as the VLM path, so callers
@@ -139,14 +215,33 @@ export async function runOcrFallback(imageBlob: Blob): Promise<ExtractionResult>
   const startedAt = performance.now()
   try {
     const worker = await getTesseractWorker()
-    const { data } = await worker.recognize(imageBlob)
+    const first = await worker.recognize(imageBlob)
+    let text = first.data.text
+    let parsed = parseReceiptText(text)
+
+    // Second attempt only when the first read is incomplete; keeps clean
+    // receipts on exactly the path they already take. A preprocessing
+    // failure never loses the first result.
+    if (computeFieldConfidence(parsed) < 1) {
+      try {
+        const enhanced = await enhanceForOcr(imageBlob)
+        const second = await worker.recognize(enhanced)
+        const secondParsed = parseReceiptText(second.data.text)
+        if (computeFieldConfidence(secondParsed) > computeFieldConfidence(parsed)) {
+          text = second.data.text
+          parsed = secondParsed
+        }
+      } catch {
+        // keep the first attempt
+      }
+    }
+
     const latencyMs = performance.now() - startedAt
-    const parsed = parseReceiptText(data.text)
     return {
       success: true,
       data: parsed,
       confidence: computeFieldConfidence(parsed),
-      rawModelOutput: data.text,
+      rawModelOutput: text,
       latencyMs,
     }
   } catch (e) {
