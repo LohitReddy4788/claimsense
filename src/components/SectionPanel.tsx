@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { UploadCloud, ShieldCheck, Plane, Receipt, History } from 'lucide-react'
+import { UploadCloud, ShieldCheck, Plane, Receipt, History, Database } from 'lucide-react'
 import type { SectionMeta, DashboardSection } from '../types/dashboard'
 
 interface SectionPanelProps {
@@ -13,6 +13,7 @@ const SECTION_ICONS: Record<DashboardSection, LucideIcon> = {
   travel: Plane,
   claims: Receipt,
   audit: History,
+  database: Database,
 }
 
 export function SectionPanel({ meta, children }: SectionPanelProps) {

@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { UploadCloud, ShieldCheck, Plane, Receipt, History, Lock } from 'lucide-react'
+import { UploadCloud, ShieldCheck, Plane, Receipt, History, Lock, Database } from 'lucide-react'
 import { SECTIONS, type DashboardSection } from '../types/dashboard'
 
 interface SidebarProps {
@@ -13,6 +13,7 @@ const SECTION_ICONS: Record<DashboardSection, LucideIcon> = {
   travel: Plane,
   claims: Receipt,
   audit: History,
+  database: Database,
 }
 
 export function Sidebar({ active, onSelect }: SidebarProps) {

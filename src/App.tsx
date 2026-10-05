@@ -7,6 +7,7 @@ import { TravelRequestsPanel } from './components/TravelRequestsPanel'
 import { ClaimsPanel } from './components/ClaimsPanel'
 import { AuditLogsPanel } from './components/AuditLogsPanel'
 import { PwaUpdateBanner } from './components/PwaUpdateBanner'
+import { SqlConsolePanel } from './components/SqlConsolePanel'
 import { SECTIONS, type DashboardSection } from './types/dashboard'
 
 function App() {
@@ -18,6 +19,7 @@ function App() {
     travel: <TravelRequestsPanel />,
     claims: <ClaimsPanel active={active === 'claims'} />,
     audit: <AuditLogsPanel active={active === 'audit'} />,
+    database: <SqlConsolePanel active={active === 'database'} />,
   }
 
   return (

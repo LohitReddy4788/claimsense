@@ -5,6 +5,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // PGlite loads its own WebAssembly + data bundle via import.meta.url, which
+  // Vite's dependency pre-bundler would break.
+  optimizeDeps: { exclude: ['@electric-sql/pglite'] },
   plugins: [
     react(),
     tailwindcss(),
@@ -50,7 +53,7 @@ export default defineConfig({
         // on, and the app would work online but fail after an install +
         // offline reload, the one scenario this phase exists to prove.
         maximumFileSizeToCacheInBytes: 600 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,svg,wasm,onnx,json}'],
+        globPatterns: ['**/*.{js,css,html,svg,wasm,onnx,json,data}'],
         // Model/tesseract files are fetched by URL at runtime (not
         // referenced via import.meta.url the way JS/CSS chunks are), so
         // Workbox's build-time glob won't discover them as build assets.
