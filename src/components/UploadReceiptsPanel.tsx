@@ -263,7 +263,7 @@ export function UploadReceiptsPanel() {
                   key={r.receiptId}
                   className="flex items-start gap-4 rounded-2xl border border-white/15 p-4"
                 >
-                  <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-xl border border-white/20">
+                  <div className="flex h-12 w-12 flex-none items-center justify-center overflow-hidden rounded-xl border border-white/20 sm:h-16 sm:w-16">
                     {preview?.status === 'ready' && preview.previewUrl ? (
                       <img src={preview.previewUrl} alt="" className="h-full w-full object-cover" />
                     ) : preview?.status === 'processing' ? (
@@ -425,9 +425,9 @@ export function UploadReceiptsPanel() {
                                       </div>
                                     )}
                                     {built?.reconciliation && (
-                                      <div title={built.reconciliation.reason}>
+                                      <div title={built.reconciliation.reason} className="col-span-2 min-w-0 sm:col-span-1">
                                         <dt className="text-[10px] uppercase tracking-wide text-white/40">Travel</dt>
-                                        <dd className="flex items-center gap-1 font-medium text-white">
+                                        <dd className="flex items-center gap-1 font-medium text-white [overflow-wrap:anywhere]">
                                           <Plane className="h-3 w-3 flex-none" strokeWidth={1.75} />
                                           {built.reconciliation.status === 'MATCHED'
                                             ? 'Matched'
@@ -439,9 +439,9 @@ export function UploadReceiptsPanel() {
                                       </div>
                                     )}
                                     {built?.policy && (
-                                      <div title={built.policy.message}>
+                                      <div title={built.policy.message} className="col-span-2 min-w-0 sm:col-span-1">
                                         <dt className="text-[10px] uppercase tracking-wide text-white/40">Policy</dt>
-                                        <dd className="flex items-center gap-1 font-medium text-white">
+                                        <dd className="flex items-center gap-1 font-medium text-white [overflow-wrap:anywhere]">
                                           {built.policy.status === 'PASS' ? (
                                             <ShieldCheck className="h-3 w-3 flex-none" strokeWidth={1.75} />
                                           ) : built.policy.status === 'VIOLATION' ? (

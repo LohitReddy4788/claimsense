@@ -21,7 +21,7 @@ export function PwaUpdateBanner() {
   }
 
   return (
-    <div className="animate-fade-in fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border border-white/25 bg-black p-4 text-sm text-white shadow-xl shadow-black/50">
+    <div className="animate-fade-in fixed inset-x-4 bottom-4 z-50 sm:inset-x-auto sm:bottom-5 sm:right-5 sm:max-w-sm rounded-2xl border border-white/25 bg-black p-4 text-sm text-white shadow-xl shadow-black/50">
       {needRefresh ? (
         <div className="flex gap-3">
           <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-white/40">
