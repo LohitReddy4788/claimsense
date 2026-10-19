@@ -43,6 +43,11 @@ npm run preview  # serve the production build locally
   approve step.
 - **Audit Logs** — a SHA-256 hash-chained, tamper-evident record of every
   action.
+- **Database (SQL)** — read-only SQL over the app's own on-device
+  PostgreSQL database.
+
+Works on phones (navigation collapses into a menu below 768px wide) and,
+after the first visit, with the network off (installable PWA).
 
 ## Docs
 
@@ -56,7 +61,8 @@ npm run preview  # serve the production build locally
 
 ## Stack
 
-React 19 + TypeScript + Vite, Tailwind CSS, Dexie (IndexedDB) + OPFS for
-local storage, ONNX Runtime Web (WebGPU/WASM) for on-device inference,
+React 19 + TypeScript + Vite, Tailwind CSS, PostgreSQL running in the
+browser (PGlite, WebAssembly, shared across tabs via a leader-elected
+worker) + OPFS for local storage, ONNX Runtime Web (WebGPU/WASM) for on-device inference,
 Tesseract.js for OCR, XState for pipeline orchestration, SheetJS for XLSX
 export.

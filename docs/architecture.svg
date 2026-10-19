@@ -81,6 +81,7 @@ text { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; fill:
 <rect class="container" x="470" y="190" width="150" height="118" rx="8"/>
 <text x="545" y="240" text-anchor="middle" class="th">local storage</text>
 <text x="545" y="258" text-anchor="middle" class="ts">data + audit log</text>
+<text x="545" y="276" text-anchor="middle" class="ts">PostgreSQL (PGlite) + OPFS</text>
 <line x1="440" y1="250" x2="470" y2="250" class="arr" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
 
 <rect class="box gray" x="470" y="330" width="150" height="48" rx="4"/>
