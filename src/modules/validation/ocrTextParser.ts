@@ -1,6 +1,7 @@
 import { createWorker } from 'tesseract.js'
 import { computeFieldConfidence } from './receiptSchema'
 import { normalizeCurrency } from '../../utils/currency'
+import { parsePrintedBreakdown, largestNonTenderAmount } from './receiptBreakdown'
 import type { ExtractionResult, ExtractedReceiptData } from '../../types/extraction'
 
 // Bundled locally (public/tesseract/) rather than Tesseract.js's CDN
@@ -39,9 +40,9 @@ const LINE_ITEM_LIKE_PATTERN = /\d+[.,]\d{2}\s*$/
 
 /** Heuristic field extraction from raw OCR text — deliberately simple
  * regexes, not an LLM. Vendor is a guess (first line that doesn't look
- * like a number, phone, or a labeled metadata field); amount picks the
- * LARGEST dollar-formatted number found, on the assumption a receipt's
- * total is usually its biggest line item. Wrong more often than the VLM
+ * like a number, phone, or a labeled metadata field); amount is the
+ * printed TOTAL line, falling back to the largest non-cash/change price
+ * (see bug #23 below). Wrong more often than the VLM
  * would be, by design this only runs when the VLM already failed or was
  * low-confidence, and its own confidence score (gap-fix #4) still gates
  * whether it's trusted or sent to human review either way — though that
@@ -95,10 +96,17 @@ function parseReceiptText(text: string): ExtractedReceiptData {
       ) ?? null
   const vendor = rawVendor ? cleanOcrNoise(rawVendor) || null : null
 
+  // Real bug #23 (found live 2026-10-19): the amount used to be simply the
+  // LARGEST price on the receipt, so a $33.79 meal paid with a $50 note was
+  // read as a $50.00 claim at 100% confidence. Now: the printed TOTAL line
+  // when it was read; else the largest price that isn't cash tendered or
+  // change; the old any-price scan only as a last resort.
+  const breakdown = parsePrintedBreakdown(lines)
   const amounts = [...text.matchAll(AMOUNT_PATTERN)]
     .map((m) => parseFloat(m[1].replace(',', '.')))
     .filter((n) => !Number.isNaN(n))
-  const amount = amounts.length > 0 ? Math.max(...amounts) : null
+  const amount =
+    breakdown.total ?? largestNonTenderAmount(lines) ?? (amounts.length > 0 ? Math.max(...amounts) : null)
 
   const dateMatch = text.match(DATE_PATTERN)
   const date = dateMatch && isPlausibleDate(dateMatch[1]) ? dateMatch[1] : null
@@ -106,7 +114,10 @@ function parseReceiptText(text: string): ExtractedReceiptData {
   const currencyMatch = text.match(CURRENCY_PATTERN)
   const currency = normalizeCurrency(currencyMatch ? currencyMatch[0] : null)
 
-  return { vendor, amount, currency, date, lineItems: [] }
+  // Line items used to always be [] here, so once OCR became the primary
+  // path the line-items-vs-total fake-bill check silently never ran for
+  // most receipts.
+  return { vendor, amount, currency, date, lineItems: breakdown.lineItems, breakdown }
 }
 
 let workerPromise: ReturnType<typeof createWorker> | null = null

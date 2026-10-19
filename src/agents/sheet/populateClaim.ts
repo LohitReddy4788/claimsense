@@ -1,7 +1,7 @@
 import * as repo from '../../modules/storage/repository'
 import { appendAuditEntry } from '../../modules/audit/auditLog'
 import { generateId } from '../../utils/id'
-import { checkLineItemConsistency } from '../../modules/validation/lineItemConsistency'
+import { checkReceiptIntegrity } from '../../modules/validation/receiptIntegrity'
 import type { ExtractedReceiptData } from '../../types/extraction'
 import type { ExpenseCategory } from '../../types/category'
 import type { ReconciliationResult } from '../../types/reconciliation'
@@ -76,14 +76,16 @@ async function checkDuplicate(input: PopulateClaimInput): Promise<DuplicateCheck
  * so UNMATCHED is an expected, ordinary outcome, not a red flag. */
 export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRecord> {
   const { duplicateOfClaimId } = await checkDuplicate(input)
-  const lineItemCheck = checkLineItemConsistency(input.data.amount, input.data.lineItems)
+  // Line items vs total, printed subtotal+tax+tip vs total, and a
+  // future-dated receipt — any one routes to review with its reason.
+  const integrityCheck = checkReceiptIntegrity(input.data)
 
   const needsReview =
     input.extractionStatus === 'needs_review' ||
     input.policy.status !== 'PASS' ||
     input.reconciliation.status === 'REVIEW' ||
     duplicateOfClaimId !== null ||
-    !lineItemCheck.consistent
+    !integrityCheck.consistent
 
   const claim: ClaimRecord = {
     claimId: generateId('claim'),
@@ -98,7 +100,7 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
     policyResult: input.policy.status,
     policyReasonCode: input.policy.reasonCode,
     duplicateOfClaimId,
-    lineItemReviewReason: lineItemCheck.reason,
+    lineItemReviewReason: integrityCheck.reason,
     status: needsReview ? 'review' : 'draft',
     createdAt: new Date().toISOString(),
     approvedAt: null,
@@ -110,7 +112,7 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
     'CLAIM_CREATED',
     `vendor: ${claim.vendor ?? '—'}, amount: ${claim.amount ?? '—'} ${claim.currency ?? ''}, status: ${claim.status}` +
       (duplicateOfClaimId ? `, possible duplicate of ${duplicateOfClaimId}` : '') +
-      (lineItemCheck.reason ? `, ${lineItemCheck.reason}` : ''),
+      (integrityCheck.reason ? `, ${integrityCheck.reason}` : ''),
   )
   return claim
 }

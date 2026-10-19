@@ -24,7 +24,7 @@ function claimToRow(claim: ClaimRecord, receiptFileName: string) {
     'Policy Result': claim.policyResult ?? '',
     'Policy Reason': claim.policyReasonCode ?? '',
     'Duplicate Of': claim.duplicateOfClaimId ?? '',
-    'Line Item Check': claim.lineItemReviewReason ?? '',
+    'Consistency Check': claim.lineItemReviewReason ?? '',
     'Approved At': claim.approvedAt ?? '',
   }
 }

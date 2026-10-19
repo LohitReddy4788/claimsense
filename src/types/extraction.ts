@@ -1,3 +1,5 @@
+import type { PrintedBreakdown } from '../modules/validation/receiptBreakdown'
+
 export interface ExtractedLineItem {
   description: string
   amount: number | null
@@ -9,6 +11,9 @@ export interface ExtractedReceiptData {
   currency: string | null
   date: string | null
   lineItems: ExtractedLineItem[]
+  /** The receipt's own printed subtotal/tax/tip/total lines, when read
+   * (OCR path only). Feeds the arithmetic consistency check. */
+  breakdown?: PrintedBreakdown
 }
 
 /** Which compute path actually ran the on-device model — WebGPU when the

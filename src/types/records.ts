@@ -55,11 +55,14 @@ export interface ClaimRecord {
   /** claimId of the existing claim this one appears to duplicate, if any
    * (gap-fix #1: exact file hash OR normalized vendor+date+amount+currency). */
   duplicateOfClaimId: string | null
-  /** Non-null when the extracted line items sum to more than the claimed
-   * total — a receipt's line items can legitimately sum to LESS than the
-   * total (tax/tip often aren't itemized), but never legitimately more.
-   * One deterministic, honest signal toward a doctored or misread total;
-   * not a fraud verdict, just a reason to route to human review. */
+  /** Non-null when the receipt's own numbers or date don't hold together
+   * (receiptIntegrity.ts): line items summing to MORE than the total (they
+   * can legitimately sum to less — tax/tip often aren't itemized), a
+   * printed subtotal + tax + tip that doesn't equal the printed total, or
+   * a date after today. Deterministic, honest signals toward a doctored or
+   * misread receipt; not a fraud verdict, just a reason for human review.
+   * (Name kept from when line items were the only check, to avoid a
+   * database column rename.) */
   lineItemReviewReason: string | null
   status: 'draft' | 'review' | 'approved'
   createdAt: string
