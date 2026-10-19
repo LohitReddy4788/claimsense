@@ -17,11 +17,12 @@ import {
   CircleAlert,
   XCircle,
 } from 'lucide-react'
-import { db } from '../modules/storage/db'
+import * as repo from '../modules/storage/repository'
 import { ingestReceipt } from '../agents/ingestion/ingestReceipt'
 import { processDocument } from '../modules/document-processing/processDocument'
 import { readReceiptFile } from '../modules/storage/opfs'
 import { runOrchestrator, type OrchestratorPhase } from '../agents/orchestrator/runOrchestrator'
+import { LoadingState, errorText } from './LoadingState'
 import type { ReceiptRecord } from '../types/records'
 import type { DetectedFileKind } from '../modules/validation/fileSignature'
 import type { ValidatedReceipt } from '../modules/validation/validateExtraction'
@@ -63,16 +64,28 @@ export function UploadReceiptsPanel() {
   // not something that should trigger a re-render on its own.
   const restoredRef = useRef<Set<string>>(new Set())
 
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
   async function refresh() {
-    const all = await db.receipts.orderBy('uploadedAt').reverse().toArray()
+    let all: ReceiptRecord[]
+    try {
+      all = await repo.listReceipts()
+    } catch (err) {
+      console.error('UploadReceiptsPanel refresh failed:', err)
+      setLoadError(errorText(err))
+      return
+    }
     setReceipts(all)
+    setLoaded(true)
+    setLoadError(null)
 
     // Found live (2026-09-24): after a page reload, `files` and `previews`
     // reset to empty — they only ever lived in this component's memory,
     // never persisted — which silently removed the "Extract" button and
     // thumbnail from any receipt that hadn't been extracted yet, even
     // though the receipt record AND its actual file bytes were both still
-    // safely in IndexedDB/OPFS the whole time (Phase 1's own guarantee).
+    // safely in the database/OPFS the whole time (Phase 1's own guarantee).
     // The fix: read the file back from OPFS (where ingestReceipt already
     // saved it) and re-populate both, restoring full functionality
     // without asking the user to re-upload something already saved.
@@ -244,13 +257,15 @@ export function UploadReceiptsPanel() {
 
       <div className="mt-8">
         <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
-          Stored receipts ({receipts.length})
+          Stored receipts ({loaded ? receipts.length : '…'})
         </p>
-        {receipts.length === 0 ? (
+        {!loaded ? (
+          <LoadingState error={loadError} />
+        ) : receipts.length === 0 ? (
           <div className="mt-3 flex flex-col items-center gap-2 rounded-2xl border border-white/15 py-12 text-center">
             <FileText className="h-8 w-8 text-white/25" strokeWidth={1.5} />
             <p className="text-sm text-white/50">
-              Nothing uploaded yet. Files are saved to OPFS; the record is saved to IndexedDB.
+              Nothing uploaded yet. Files are saved to OPFS; the record is saved to the on-device PostgreSQL database.
             </p>
           </div>
         ) : (

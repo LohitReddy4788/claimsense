@@ -71,8 +71,9 @@ export function SqlConsolePanel({ active }: SqlConsolePanelProps) {
         <div className="text-xs text-white/60">
           <p className="font-medium text-white">{version ?? 'Starting PostgreSQL…'}</p>
           <p className="mt-1">
-            Real PostgreSQL running inside this browser (WebAssembly), saved on this device. Every claim, receipt,
-            policy, trip and audit entry is mirrored here as it happens. Read-only queries only.
+            Real PostgreSQL running inside this browser (WebAssembly), saved on this device. This is the app's own
+            database: every claim, receipt, policy, trip and audit entry is stored here. Queries run in a read-only
+            transaction, so nothing here can change your data.
           </p>
         </div>
       </div>

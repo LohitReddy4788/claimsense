@@ -10,11 +10,12 @@ import {
   X,
   Landmark,
 } from 'lucide-react'
-import { db } from '../modules/storage/db'
+import * as repo from '../modules/storage/repository'
 import { generateId } from '../utils/id'
 import type { PolicyRecord, PolicySettingsRecord } from '../types/records'
 import { extractPolicyFromPdf, MAX_POLICY_PDF_PAGES } from '../agents/policy-import/extractPolicyFromPdf'
 import { EXPENSE_CATEGORIES } from '../types/category'
+import { LoadingState, errorText } from './LoadingState'
 import type { PolicyRuleCandidate } from '../types/extraction'
 
 const DEFAULT_SETTINGS: PolicySettingsRecord = {
@@ -53,13 +54,23 @@ export function PoliciesPanel() {
   >({ phase: 'idle' })
   const [suggestions, setSuggestions] = useState<PolicyRuleCandidate[]>([])
 
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
   async function refresh() {
-    const [allPolicies, savedSettings] = await Promise.all([
-      db.policies.orderBy('category').toArray(),
-      db.policySettings.get('default'),
-    ])
-    setPolicies(allPolicies)
-    setSettings(savedSettings ?? DEFAULT_SETTINGS)
+    try {
+      const [allPolicies, savedSettings] = await Promise.all([
+        repo.listPolicies(),
+        repo.getPolicySettings(),
+      ])
+      setPolicies(allPolicies)
+      setSettings(savedSettings ?? DEFAULT_SETTINGS)
+      setLoaded(true)
+      setLoadError(null)
+    } catch (err) {
+      console.error('PoliciesPanel refresh failed:', err)
+      setLoadError(errorText(err))
+    }
   }
 
   useEffect(() => {
@@ -84,7 +95,7 @@ export function PoliciesPanel() {
       category,
       limitAmount: parsedLimit,
     }
-    await db.policies.add(record)
+    await repo.addPolicy(record)
     // Category is a dropdown now, not free text — leaving the selection
     // as-is (rather than resetting) is the better default for adding
     // several limits in a row without re-picking the category each time.
@@ -92,9 +103,17 @@ export function PoliciesPanel() {
     await refresh()
   }
 
+  // Both settings writes merge into what's stored NOW rather than into this
+  // panel's copy: the copy can be the defaults (first read still in flight)
+  // or stale (changed in another tab), and saving it would silently wipe
+  // the real rate table.
+  async function currentSettings(): Promise<PolicySettingsRecord> {
+    return (await repo.getPolicySettings()) ?? DEFAULT_SETTINGS
+  }
+
   async function saveBaseCurrency(currency: string) {
-    const updated = { ...settings, baseCurrency: currency.toUpperCase() }
-    await db.policySettings.put(updated)
+    const updated = { ...(await currentSettings()), baseCurrency: currency.toUpperCase() }
+    await repo.putPolicySettings(updated)
     setSettings(updated)
   }
 
@@ -110,11 +129,12 @@ export function PoliciesPanel() {
       return
     }
     setRateError(null)
+    const stored = await currentSettings()
     const updated: PolicySettingsRecord = {
-      ...settings,
-      rates: { ...settings.rates, [newCurrency.trim().toUpperCase()]: parsedRate },
+      ...stored,
+      rates: { ...stored.rates, [newCurrency.trim().toUpperCase()]: parsedRate },
     }
-    await db.policySettings.put(updated)
+    await repo.putPolicySettings(updated)
     setSettings(updated)
     setNewCurrency('')
     setNewRate('')
@@ -146,7 +166,7 @@ export function PoliciesPanel() {
       category: candidate.category,
       limitAmount: candidate.limitAmount,
     }
-    await db.policies.add(record)
+    await repo.addPolicy(record)
     setSuggestions((prev) => prev.filter((c) => c !== candidate))
     await refresh()
   }
@@ -318,7 +338,7 @@ export function PoliciesPanel() {
           <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-white/40">
             <ListChecks className="h-4 w-4 text-white" strokeWidth={1.75} />
           </div>
-          <p className="text-sm font-semibold text-white">Category spending limits ({policies.length})</p>
+          <p className="text-sm font-semibold text-white">Category spending limits ({loaded ? policies.length : '…'})</p>
         </div>
 
         <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-white/10 pt-4">
@@ -360,7 +380,9 @@ export function PoliciesPanel() {
             {policyError}
           </p>
         )}
-        {policies.length === 0 ? (
+        {!loaded ? (
+          <LoadingState error={loadError} />
+        ) : policies.length === 0 ? (
           <p className="mt-4 text-sm text-white/50">No policy rules yet.</p>
         ) : (
           <ul className="mt-4 divide-y divide-white/10">

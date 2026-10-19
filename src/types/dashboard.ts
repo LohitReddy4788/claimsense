@@ -18,5 +18,5 @@ export const SECTIONS: SectionMeta[] = [
   { id: 'travel', label: 'Travel Requests', description: 'Approved trips used for reconciliation.' },
   { id: 'claims', label: 'Claims', description: 'Generated claims awaiting review or exported.' },
   { id: 'audit', label: 'Audit Logs', description: 'SHA-256 hash-chained record of workflow actions.' },
-  { id: 'database', label: 'Database (SQL)', description: 'PostgreSQL mirror of all claim data — run read-only SQL on it.' },
+  { id: 'database', label: 'Database (SQL)', description: 'The PostgreSQL database behind the app — run read-only SQL on it.' },
 ]

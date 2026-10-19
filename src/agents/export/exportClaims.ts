@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import { db } from '../../modules/storage/db'
+import * as repo from '../../modules/storage/repository'
 import { appendAuditEntry } from '../../modules/audit/auditLog'
 import type { ClaimRecord } from '../../types/records'
 
@@ -43,7 +43,7 @@ function claimToRow(claim: ClaimRecord, receiptFileName: string) {
  * directly (parse the workbook back and check its rows) without also
  * needing to intercept a real browser file-save dialog. */
 export async function buildApprovedClaimsWorkbook(): Promise<WorkbookBuildResult> {
-  const [allClaims, allReceipts] = await Promise.all([db.claims.toArray(), db.receipts.toArray()])
+  const [allClaims, allReceipts] = await Promise.all([repo.listClaims(), repo.listReceipts()])
   const receiptsById = Object.fromEntries(allReceipts.map((r) => [r.receiptId, r]))
 
   const approved = allClaims.filter((c) => c.status === 'approved')

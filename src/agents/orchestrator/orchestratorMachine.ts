@@ -1,5 +1,5 @@
 import { setup, fromPromise, assign } from 'xstate'
-import { db } from '../../modules/storage/db'
+import * as repo from '../../modules/storage/repository'
 import { processDocument } from '../../modules/document-processing/processDocument'
 import { extractReceipt } from '../extraction/extractReceipt'
 import { validateExtraction } from '../../modules/validation/validateExtraction'
@@ -95,9 +95,9 @@ export const orchestratorMachine = setup({
         // session, so a travel request or policy added elsewhere after
         // this orchestrator started must still be seen (Phase 8's lesson).
         const [currentTravelRequests, currentPolicies, currentSettings] = await Promise.all([
-          db.travelRequests.toArray(),
-          db.policies.toArray(),
-          db.policySettings.get('default'),
+          repo.listTravelRequests(),
+          repo.listPolicies(),
+          repo.getPolicySettings(),
         ])
         const reconciliation = reconcileTravel(validated.data, input.employeeId, currentTravelRequests)
         const policy = evaluatePolicy(

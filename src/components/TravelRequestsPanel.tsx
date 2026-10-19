@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Plane, CircleAlert, MapPin, CalendarPlus, CheckCircle2, Clock, XCircle } from 'lucide-react'
-import { db } from '../modules/storage/db'
+import * as repo from '../modules/storage/repository'
 import { generateId } from '../utils/id'
+import { LoadingState, errorText } from './LoadingState'
 import type { TravelRequestRecord } from '../types/records'
 
 const STATUS_ICONS: Record<TravelRequestRecord['approvalStatus'], typeof CheckCircle2> = {
@@ -20,9 +21,19 @@ export function TravelRequestsPanel() {
     useState<TravelRequestRecord['approvalStatus']>('approved')
   const [dateError, setDateError] = useState<string | null>(null)
 
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
   async function refresh() {
-    const all = await db.travelRequests.toArray()
-    setRequests(all)
+    try {
+      const all = await repo.listTravelRequests()
+      setRequests(all)
+      setLoaded(true)
+      setLoadError(null)
+    } catch (err) {
+      console.error('TravelRequestsPanel refresh failed:', err)
+      setLoadError(errorText(err))
+    }
   }
 
   useEffect(() => {
@@ -49,7 +60,7 @@ export function TravelRequestsPanel() {
       endDate,
       approvalStatus,
     }
-    await db.travelRequests.add(record)
+    await repo.addTravelRequest(record)
     setEmployeeId('')
     setDestination('')
     setStartDate('')
@@ -137,9 +148,11 @@ export function TravelRequestsPanel() {
 
       <div className="mt-6">
         <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
-          Travel requests ({requests.length})
+          Travel requests ({loaded ? requests.length : '…'})
         </p>
-        {requests.length === 0 ? (
+        {!loaded ? (
+          <LoadingState error={loadError} />
+        ) : requests.length === 0 ? (
           <div className="mt-3 flex flex-col items-center gap-2 rounded-2xl border border-white/15 py-12 text-center">
             <Plane className="h-8 w-8 text-white/25" strokeWidth={1.5} />
             <p className="text-sm text-white/50">No travel requests yet.</p>

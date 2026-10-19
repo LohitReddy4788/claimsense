@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Download, Loader2, Save, ShieldCheck, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane } from 'lucide-react'
-import { db } from '../modules/storage/db'
+import * as repo from '../modules/storage/repository'
 import { editClaim, approveClaim } from '../agents/review/reviewClaim'
 import { exportApprovedClaims } from '../agents/export/exportClaims'
 import { EXPENSE_CATEGORIES } from '../types/category'
+import { LoadingState, errorText } from './LoadingState'
 import type { ClaimRecord, ReceiptRecord } from '../types/records'
 
 interface EditBuffer {
@@ -39,12 +40,14 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
   const [message, setMessage] = useState<Record<string, string>>({})
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   async function refresh() {
     try {
       const [allClaims, allReceipts] = await Promise.all([
-        db.claims.orderBy('createdAt').reverse().toArray(),
-        db.receipts.toArray(),
+        repo.listClaims(),
+        repo.listReceipts(),
       ])
       setClaims(allClaims)
       setReceiptsById(Object.fromEntries(allReceipts.map((r) => [r.receiptId, r])))
@@ -57,10 +60,13 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
         }
         return next
       })
+      setLoaded(true)
+      setLoadError(null)
     } catch (err) {
       // A failed refresh must be visible, not a silent no-op — this is
       // exactly how the createdAt-index bug hid itself during testing.
       console.error('ClaimsPanel refresh failed:', err)
+      setLoadError(errorText(err))
     }
   }
 
@@ -77,7 +83,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
       setMessage((m) => ({ ...m, [claimId]: 'Amount must be a number.' }))
       return
     }
-    // editClaim/db.claims.update can throw on a genuine storage error (quota,
+    // editClaim/repo.updateClaim can throw on a genuine storage error (quota,
     // corruption) — without this, that failure was an unhandled rejection
     // with nothing shown on screen, the same silent-failure class refresh()
     // above is already guarded against.
@@ -129,7 +135,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
-          Claims ({claims.length})
+          Claims ({loaded ? claims.length : '…'})
         </p>
         <button
           type="button"
@@ -142,7 +148,9 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
         </button>
       </div>
       {exportMessage && <p className="mt-2 text-xs text-white/60">{exportMessage}</p>}
-      {claims.length === 0 ? (
+      {!loaded ? (
+        <LoadingState error={loadError} />
+      ) : claims.length === 0 ? (
         <div className="mt-3 flex flex-col items-center gap-2 rounded-2xl border border-white/15 py-12 text-center">
           <Receipt className="h-8 w-8 text-white/25" strokeWidth={1.5} />
           <p className="text-sm text-white/50">No claims yet — extract a receipt in Upload Receipts first.</p>

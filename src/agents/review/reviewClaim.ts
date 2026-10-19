@@ -1,4 +1,4 @@
-import { db } from '../../modules/storage/db'
+import * as repo from '../../modules/storage/repository'
 import { appendAuditEntry } from '../../modules/audit/auditLog'
 import type { ClaimRecord } from '../../types/records'
 
@@ -12,7 +12,7 @@ export type ClaimEditableFields = Pick<ClaimRecord, 'vendor' | 'amount' | 'curre
  * original policy/reconciliation results alongside the correction so
  * nothing is silently hidden. */
 export async function editClaim(claimId: string, patch: Partial<ClaimEditableFields>): Promise<void> {
-  await db.claims.update(claimId, patch)
+  await repo.updateClaim(claimId, patch)
   const fields = Object.entries(patch)
     .map(([key, value]) => `${key}: ${value ?? '—'}`)
     .join(', ')
@@ -33,7 +33,7 @@ export type ApproveResult =
  * is actually fine (e.g. a false-positive duplicate); the gate is "a
  * human saw this," not "the pipeline was 100% confident." */
 export async function approveClaim(claimId: string): Promise<ApproveResult> {
-  const claim = await db.claims.get(claimId)
+  const claim = await repo.getClaim(claimId)
   if (!claim) {
     return { success: false, reason: `No claim found with id ${claimId}.` }
   }
@@ -42,9 +42,9 @@ export async function approveClaim(claimId: string): Promise<ApproveResult> {
   }
 
   const approvedAt = new Date().toISOString()
-  await db.claims.update(claimId, { status: 'approved', approvedAt })
-  const updated = await db.claims.get(claimId)
-  // db.claims.get right after update should never be undefined — the
+  await repo.updateClaim(claimId, { status: 'approved', approvedAt })
+  const updated = await repo.getClaim(claimId)
+  // getClaim right after update should never be undefined — the
   // record we just successfully updated by its own primary key — but
   // treat it as a real failure rather than a non-null assertion if it
   // somehow is, since callers depend on getting a real ClaimRecord back.

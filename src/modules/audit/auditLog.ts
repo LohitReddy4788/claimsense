@@ -1,4 +1,4 @@
-import { db } from '../storage/db'
+import * as repo from '../storage/repository'
 import type { AuditLogRecord } from '../../types/records'
 
 // The first entry in the chain has no real predecessor to point at — a
@@ -31,19 +31,21 @@ let appendQueue: Promise<unknown> = Promise.resolve()
  * entry's hash covers the previous entry's hash plus its own fields, so
  * altering or deleting any past entry breaks every hash computed after it.
  * This is tamper-EVIDENT, not tamper-PROOF: nothing stops someone editing
- * the raw IndexedDB directly, but doing so is provably detectable via
+ * the raw database directly, but doing so is provably detectable via
  * verifyAuditChain() below, which is the actual point of an audit trail
  * for an expense system. */
 export function appendAuditEntry(entityId: string, action: string, detail: string): Promise<AuditLogRecord> {
-  const task = appendQueue.then(async () => {
-    const last = await db.auditLogs.orderBy('id').last()
-    const previousHash = last?.currentHash ?? GENESIS_HASH
-    const timestamp = new Date().toISOString()
-    const currentHash = await sha256Hex(hashInput(previousHash, entityId, action, timestamp, detail))
-    const record: AuditLogRecord = { entityId, action, detail, currentHash, previousHash, timestamp }
-    const id = await db.auditLogs.add(record)
-    return { ...record, id }
-  })
+  const task = appendQueue.then(() =>
+    // Read-head + insert run as one database transaction, which also
+    // serializes appends coming from other open tabs (this queue only
+    // orders the ones from this tab).
+    repo.appendAuditLog(async (last) => {
+      const previousHash = last?.currentHash ?? GENESIS_HASH
+      const timestamp = new Date().toISOString()
+      const currentHash = await sha256Hex(hashInput(previousHash, entityId, action, timestamp, detail))
+      return { entityId, action, detail, currentHash, previousHash, timestamp }
+    }),
+  )
   // Keep the queue alive even if this particular append fails, so a single
   // bad write doesn't wedge every audit entry after it.
   appendQueue = task.then(
@@ -68,7 +70,7 @@ export interface ChainVerification {
  * an entry's stored currentHash forged to something that doesn't match its
  * own content. */
 export async function verifyAuditChain(): Promise<ChainVerification> {
-  const entries = await db.auditLogs.orderBy('id').toArray()
+  const entries = await repo.listAuditLogs('asc')
   let expectedPrevious = GENESIS_HASH
 
   for (const entry of entries) {

@@ -1,11 +1,12 @@
-import { PGlite } from '@electric-sql/pglite'
-import { db } from './db'
+import { PGliteWorker } from '@electric-sql/pglite/worker'
 
 // PostgreSQL (PGlite = the real Postgres engine compiled to WebAssembly)
-// running inside the browser and persisted to this device's own storage, so
-// the zero-network, on-device guarantee still holds. Dexie remains the
-// source the app reads and writes; every write is mirrored here after its
-// transaction commits, so a mirror failure can never break the app.
+// running inside the browser and persisted to this device's own storage
+// (IndexedDB under the name below), so the zero-network, on-device
+// guarantee still holds. This is the app's system of record: every read
+// and write goes through repository.ts to these tables. (Until 2026-10-19
+// Dexie was the store and this was a write-behind mirror — see
+// migrateFromDexie() for how existing data carries over.)
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS receipts (
@@ -79,49 +80,59 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_id);
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp);
+
+CREATE TABLE IF NOT EXISTS app_meta (
+  key    TEXT PRIMARY KEY,
+  value  TEXT NOT NULL
+);
 `
 
-type Row = Record<string, unknown>
-type Col = [column: string, field: string, cast?: string]
+export type Row = Record<string, unknown>
 
-interface TableMap {
+/** How a column round-trips between a JS record and Postgres. Anything
+ * without a kind is TEXT and passes through unchanged. */
+type ColKind = 'int8' | 'numeric' | 'date' | 'timestamptz' | 'jsonb'
+type Col = [column: string, field: string, kind?: ColKind]
+
+export interface TableMap {
   sql: string
   pk: string
   pkField: string
   cols: Col[]
-  dexie: 'receipts' | 'travelRequests' | 'policies' | 'policySettings' | 'claims' | 'auditLogs'
+  /** Optional fields stored as NULL but absent (undefined) on the record. */
+  optional?: string[]
 }
 
-const TABLES: TableMap[] = [
-  {
-    sql: 'receipts', pk: 'receipt_id', pkField: 'receiptId', dexie: 'receipts',
+export const TABLES = {
+  receipts: {
+    sql: 'receipts', pk: 'receipt_id', pkField: 'receiptId',
     cols: [
       ['receipt_id', 'receiptId'], ['file_name', 'fileName'], ['file_type', 'fileType'],
-      ['file_size', 'fileSize'], ['opfs_path', 'opfsPath'], ['file_hash', 'fileHash'],
+      ['file_size', 'fileSize', 'int8'], ['opfs_path', 'opfsPath'], ['file_hash', 'fileHash'],
       ['status', 'status'], ['uploaded_at', 'uploadedAt', 'timestamptz'],
     ],
   },
-  {
-    sql: 'travel_requests', pk: 'request_id', pkField: 'requestId', dexie: 'travelRequests',
+  travelRequests: {
+    sql: 'travel_requests', pk: 'request_id', pkField: 'requestId',
     cols: [
       ['request_id', 'requestId'], ['employee_id', 'employeeId'], ['destination', 'destination'],
       ['start_date', 'startDate', 'date'], ['end_date', 'endDate', 'date'],
       ['approval_status', 'approvalStatus'],
     ],
   },
-  {
-    sql: 'policies', pk: 'policy_id', pkField: 'policyId', dexie: 'policies',
+  policies: {
+    sql: 'policies', pk: 'policy_id', pkField: 'policyId', optional: ['notes'],
     cols: [
       ['policy_id', 'policyId'], ['category', 'category'], ['limit_amount', 'limitAmount', 'numeric'],
       ['notes', 'notes'],
     ],
   },
-  {
-    sql: 'policy_settings', pk: 'id', pkField: 'id', dexie: 'policySettings',
+  policySettings: {
+    sql: 'policy_settings', pk: 'id', pkField: 'id',
     cols: [['id', 'id'], ['base_currency', 'baseCurrency'], ['rates', 'rates', 'jsonb']],
   },
-  {
-    sql: 'claims', pk: 'claim_id', pkField: 'claimId', dexie: 'claims',
+  claims: {
+    sql: 'claims', pk: 'claim_id', pkField: 'claimId',
     cols: [
       ['claim_id', 'claimId'], ['receipt_id', 'receiptId'], ['file_hash', 'fileHash'],
       ['vendor', 'vendor'], ['amount', 'amount', 'numeric'], ['currency', 'currency'],
@@ -132,26 +143,72 @@ const TABLES: TableMap[] = [
       ['created_at', 'createdAt', 'timestamptz'], ['approved_at', 'approvedAt', 'timestamptz'],
     ],
   },
-  {
-    sql: 'audit_logs', pk: 'id', pkField: 'id', dexie: 'auditLogs',
+  auditLogs: {
+    sql: 'audit_logs', pk: 'id', pkField: 'id',
     cols: [
-      ['id', 'id'], ['entity_id', 'entityId'], ['action', 'action'], ['detail', 'detail'],
+      ['id', 'id', 'int8'], ['entity_id', 'entityId'], ['action', 'action'], ['detail', 'detail'],
       ['current_hash', 'currentHash'], ['previous_hash', 'previousHash'],
       ['timestamp', 'timestamp', 'timestamptz'],
     ],
   },
-]
+} satisfies Record<string, TableMap>
 
-let pgPromise: Promise<PGlite> | null = null
-let queue: Promise<void> = Promise.resolve()
-let hooksInstalled = false
+export type TableName = keyof typeof TABLES
 
-export function getPg(): Promise<PGlite> {
+/** SELECT list that reads every column back in exactly the shape the app
+ * wrote it. Timestamps in particular come back as the same
+ * millisecond-precision UTC ISO string toISOString() produced — not a Date,
+ * not a server-local format — because the audit chain hashes the timestamp
+ * string, and any drift would make every entry look tampered. */
+export function selectList(table: TableMap): string {
+  return table.cols
+    .map(([col, field, kind]) => {
+      const expr =
+        kind === 'timestamptz'
+          ? `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
+          : kind === 'date'
+            ? `to_char(${col}, 'YYYY-MM-DD')`
+            : kind === 'numeric' || kind === 'int8'
+              ? `${col}::float8`
+              : col
+      return `${expr} AS "${field}"`
+    })
+    .join(', ')
+}
+
+export function toRecord<T>(table: TableMap, row: Row): T {
+  const out: Row = { ...row }
+  for (const field of table.optional ?? []) {
+    if (out[field] === null) delete out[field]
+  }
+  return out as T
+}
+
+export function toParam(kind: ColKind | undefined, value: unknown): unknown {
+  if (value === undefined || value === null) return null
+  return kind === 'jsonb' ? JSON.stringify(value) : value
+}
+
+export function placeholder(kind: ColKind | undefined, index: number): string {
+  const cast = kind === 'int8' ? 'bigint' : kind
+  return `$${index}${cast ? `::${cast}` : ''}`
+}
+
+let pgPromise: Promise<PGliteWorker> | null = null
+
+/** The database connection, opened lazily, schema-checked, and with any
+ * pre-Postgres (Dexie) data carried over before the first query runs. The
+ * database itself lives in a shared, leader-elected worker (pgWorker.ts) so
+ * any number of open tabs all use one instance. */
+export function getPg(): Promise<PGliteWorker> {
   if (!pgPromise) {
     pgPromise = (async () => {
-      const pg = new PGlite('idb://claimsense-pg')
+      const pg = new PGliteWorker(
+        new Worker(new URL('../../workers/pgWorker.ts', import.meta.url), { type: 'module' }),
+      )
       await pg.waitReady
       await pg.exec(SCHEMA)
+      await migrateFromDexie(pg)
       return pg
     })()
     pgPromise.catch(() => {
@@ -161,15 +218,12 @@ export function getPg(): Promise<PGlite> {
   return pgPromise
 }
 
-async function upsert(table: TableMap, record: Row) {
-  const pg = await getPg()
+const MIGRATION_KEY = 'dexie_migrated_at'
+
+async function upsertRaw(pg: PGliteWorker, table: TableMap, record: Row) {
   const cols = table.cols.map((c) => c[0])
-  const placeholders = table.cols.map((c, i) => `$${i + 1}${c[2] ? `::${c[2]}` : ''}`)
-  const values = table.cols.map(([, field, cast]) => {
-    const v = record[field]
-    if (v === undefined || v === null) return null
-    return cast === 'jsonb' ? JSON.stringify(v) : v
-  })
+  const placeholders = table.cols.map(([, , kind], i) => placeholder(kind, i + 1))
+  const values = table.cols.map(([, field, kind]) => toParam(kind, record[field]))
   const updates = cols.filter((c) => c !== table.pk).map((c) => `${c} = EXCLUDED.${c}`)
   await pg.query(
     `INSERT INTO ${table.sql} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})
@@ -178,54 +232,63 @@ async function upsert(table: TableMap, record: Row) {
   )
 }
 
-function enqueue(work: () => Promise<void>) {
-  queue = queue.then(work).catch((err) => {
-    console.error('PostgreSQL mirror write failed (app data is unaffected):', err)
-  })
-}
+/** One-time carry-over of anything stored before Postgres became the system
+ * of record. Upserts are idempotent, so a migration interrupted halfway
+ * simply runs again next start; the flag is written only once every table
+ * is done. Dexie's data is left in place (never deleted) — after this, the
+ * app simply never reads or writes it again. */
+async function migrateFromDexie(pg: PGliteWorker) {
+  const done = await pg.query<{ value: string }>('SELECT value FROM app_meta WHERE key = $1', [MIGRATION_KEY])
+  if (done.rows.length > 0) return
 
-async function mirrorOne(table: TableMap, key: unknown) {
-  const record = (await db[table.dexie].get(key as never)) as unknown as Row | undefined
-  if (record) await upsert(table, record)
-}
-
-async function backfill() {
-  for (const table of TABLES) {
-    const rows = (await db[table.dexie].toArray()) as unknown as Row[]
-    for (const row of rows) await upsert(table, row)
+  const { db } = await import('./db')
+  const read = async (name: TableName) => {
+    try {
+      return (await db.table(name).toArray()) as Row[]
+    } catch {
+      return [] // a device that never had the Dexie database
+    }
   }
-}
 
-/** Starts the mirror: creates the Postgres schema, copies anything already in
- * Dexie across, then mirrors every later write. Safe to call more than once. */
-export function startPostgresMirror() {
-  if (hooksInstalled) return
-  hooksInstalled = true
-
-  for (const table of TABLES) {
-    const dexieTable = db[table.dexie]
-    dexieTable.hook('creating', function (_pk, _obj, trans) {
-      this.onsuccess = (pk: unknown) => {
-        trans.on('complete', () => enqueue(() => mirrorOne(table, pk)))
+  let skipped = 0
+  const copy = async (name: TableName, rows: Row[]) => {
+    for (const row of rows) {
+      try {
+        await upsertRaw(pg, TABLES[name], row)
+      } catch (err) {
+        // e.g. a claim whose receipt was deleted during earlier manual
+        // testing (a foreign-key violation): logged, not fatal — the row
+        // is still in the old Dexie store if it is ever needed.
+        skipped++
+        console.warn(`Skipped migrating a ${name} row:`, row, err)
       }
-    })
-    dexieTable.hook('updating', (_mods, pk, _obj, trans) => {
-      trans.on('complete', () => enqueue(() => mirrorOne(table, pk)))
-    })
-    dexieTable.hook('deleting', (pk, _obj, trans) => {
-      trans.on('complete', () =>
-        enqueue(async () => {
-          const pg = await getPg()
-          await pg.query(`DELETE FROM ${table.sql} WHERE ${table.pk} = $1`, [pk])
-        }),
-      )
-    })
+    }
   }
 
-  enqueue(async () => {
-    await getPg()
-    await backfill()
-  })
+  // Parents before children, so the foreign keys hold.
+  await copy('receipts', await read('receipts'))
+  await copy('travelRequests', await read('travelRequests'))
+  await copy('policies', await read('policies'))
+  await copy('policySettings', await read('policySettings'))
+  // Claims reference each other (duplicate_of_claim_id): insert without that
+  // link first, then restore it once every claim exists.
+  const claims = await read('claims')
+  await copy('claims', claims.map((c) => ({ ...c, duplicateOfClaimId: null })))
+  for (const c of claims) {
+    if (c.duplicateOfClaimId) {
+      await pg
+        .query('UPDATE claims SET duplicate_of_claim_id = $1 WHERE claim_id = $2', [c.duplicateOfClaimId, c.claimId])
+        .catch(() => skipped++)
+    }
+  }
+  const audit = (await read('auditLogs')).sort((a, b) => Number(a.id) - Number(b.id))
+  await copy('auditLogs', audit)
+
+  await pg.query('INSERT INTO app_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [
+    MIGRATION_KEY,
+    new Date().toISOString(),
+  ])
+  if (skipped > 0) console.warn(`Dexie → PostgreSQL migration finished with ${skipped} row(s) skipped.`)
 }
 
 export interface SqlResult {
@@ -237,17 +300,23 @@ export interface SqlResult {
 
 const MUTATING = /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|copy|call|do)\b/i
 
-/** Read-only SQL for the in-app console. The mirror is derived data, but a
- * demo console should never be able to damage it. */
+/** Read-only SQL for the in-app console. This is the live system of record,
+ * so the console must never be able to change or damage it — every change
+ * has to go through the app (and its audit trail). */
 export async function runReadOnlyQuery(sql: string): Promise<SqlResult> {
   const text = sql.trim().replace(/;+\s*$/, '')
   if (!/^(select|with|explain|show)\b/i.test(text) || MUTATING.test(text)) {
     throw new Error('Only read-only queries (SELECT, WITH, EXPLAIN, SHOW) are allowed here.')
   }
-  await queue
   const pg = await getPg()
   const started = performance.now()
-  const result = await pg.query<Row>(text)
+  // The keyword filter above is a fast, friendly first check; the real
+  // guarantee is Postgres itself refusing any write inside a READ ONLY
+  // transaction (e.g. a data-modifying function the regex didn't spot).
+  const result = await pg.transaction(async (tx) => {
+    await tx.exec('SET TRANSACTION READ ONLY')
+    return tx.query<Row>(text)
+  })
   return {
     fields: result.fields.map((f) => f.name),
     rows: result.rows,

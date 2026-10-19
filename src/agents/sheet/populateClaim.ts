@@ -1,4 +1,4 @@
-import { db } from '../../modules/storage/db'
+import * as repo from '../../modules/storage/repository'
 import { appendAuditEntry } from '../../modules/audit/auditLog'
 import { generateId } from '../../utils/id'
 import { checkLineItemConsistency } from '../../modules/validation/lineItemConsistency'
@@ -46,7 +46,7 @@ interface DuplicateCheck {
  * flags for review — never silently rejected, since a false positive here
  * would be worse than an occasional missed duplicate. */
 async function checkDuplicate(input: PopulateClaimInput): Promise<DuplicateCheck> {
-  const existingClaims = await db.claims.toArray()
+  const existingClaims = await repo.listClaims()
 
   const exactHashMatch = existingClaims.find((c) => c.fileHash === input.fileHash)
   if (exactHashMatch) return { duplicateOfClaimId: exactHashMatch.claimId }
@@ -104,7 +104,7 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
     approvedAt: null,
   }
 
-  await db.claims.add(claim)
+  await repo.addClaim(claim)
   await appendAuditEntry(
     claim.claimId,
     'CLAIM_CREATED',

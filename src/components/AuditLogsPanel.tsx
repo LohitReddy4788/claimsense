@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ShieldCheck, ShieldAlert, Loader2, History, Link2, Hash } from 'lucide-react'
-import { db } from '../modules/storage/db'
+import * as repo from '../modules/storage/repository'
 import { verifyAuditChain, type ChainVerification } from '../modules/audit/auditLog'
+import { LoadingState, errorText } from './LoadingState'
 import type { AuditLogRecord } from '../types/records'
 
 interface AuditLogsPanelProps {
@@ -13,9 +14,19 @@ export function AuditLogsPanel({ active }: AuditLogsPanelProps) {
   const [verification, setVerification] = useState<ChainVerification | null>(null)
   const [verifying, setVerifying] = useState(false)
 
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
   async function refresh() {
-    const all = await db.auditLogs.orderBy('id').reverse().toArray()
-    setEntries(all)
+    try {
+      const all = await repo.listAuditLogs('desc')
+      setEntries(all)
+      setLoaded(true)
+      setLoadError(null)
+    } catch (err) {
+      console.error('AuditLogsPanel refresh failed:', err)
+      setLoadError(errorText(err))
+    }
   }
 
   useEffect(() => {
@@ -34,7 +45,7 @@ export function AuditLogsPanel({ active }: AuditLogsPanelProps) {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
-          Audit Log ({entries.length})
+          Audit Log ({loaded ? entries.length : '…'})
         </p>
         <button
           type="button"
@@ -62,7 +73,9 @@ export function AuditLogsPanel({ active }: AuditLogsPanelProps) {
         </div>
       )}
 
-      {entries.length === 0 ? (
+      {!loaded ? (
+        <LoadingState error={loadError} />
+      ) : entries.length === 0 ? (
         <div className="mt-3 flex flex-col items-center gap-2 rounded-2xl border border-white/15 py-12 text-center">
           <History className="h-8 w-8 text-white/25" strokeWidth={1.5} />
           <p className="text-sm text-white/50">
