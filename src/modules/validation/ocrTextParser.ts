@@ -207,6 +207,25 @@ async function enhanceForOcr(imageBlob: Blob): Promise<Blob> {
   return canvas.convertToBlob({ type: 'image/png' })
 }
 
+// Found live (2026-10-19, offline test): when Tesseract can't load a file it
+// needs (here the language data), it throws inside its own message handler
+// and createWorker() never settles — the UI sat on "Reading text (OCR)…"
+// forever. Same defense-in-depth as processDocument.ts and extractReceipt.ts:
+// a hard timeout turns a silent hang into a normal failure that the catch
+// below recovers from. Generous bounds — a cold start is ~10-20s, a read ~1s.
+const OCR_INIT_TIMEOUT_MS = 45_000
+const OCR_RECOGNIZE_TIMEOUT_MS = 60_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000}s`)), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
 /** OCR fallback (Validation module) — runs when the VLM extraction failed
  * or scored low confidence. Never throws: an OCR failure becomes
  * success:false with a reason, same contract as the VLM path, so callers
@@ -214,8 +233,8 @@ async function enhanceForOcr(imageBlob: Blob): Promise<Blob> {
 export async function runOcrFallback(imageBlob: Blob): Promise<ExtractionResult> {
   const startedAt = performance.now()
   try {
-    const worker = await getTesseractWorker()
-    const first = await worker.recognize(imageBlob)
+    const worker = await withTimeout(getTesseractWorker(), OCR_INIT_TIMEOUT_MS, 'OCR engine start')
+    const first = await withTimeout(worker.recognize(imageBlob), OCR_RECOGNIZE_TIMEOUT_MS, 'OCR read')
     let text = first.data.text
     let parsed = parseReceiptText(text)
 
@@ -225,7 +244,7 @@ export async function runOcrFallback(imageBlob: Blob): Promise<ExtractionResult>
     if (computeFieldConfidence(parsed) < 1) {
       try {
         const enhanced = await enhanceForOcr(imageBlob)
-        const second = await worker.recognize(enhanced)
+        const second = await withTimeout(worker.recognize(enhanced), OCR_RECOGNIZE_TIMEOUT_MS, 'OCR read')
         const secondParsed = parseReceiptText(second.data.text)
         if (computeFieldConfidence(secondParsed) > computeFieldConfidence(parsed)) {
           text = second.data.text

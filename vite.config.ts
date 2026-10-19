@@ -53,7 +53,18 @@ export default defineConfig({
         // on, and the app would work online but fail after an install +
         // offline reload, the one scenario this phase exists to prove.
         maximumFileSizeToCacheInBytes: 600 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,svg,wasm,onnx,json,data}'],
+        // `gz` covers Tesseract's eng.traineddata.gz — without it OCR, the
+        // primary extraction path, could not start offline (found live).
+        globPatterns: ['**/*.{js,css,html,svg,wasm,onnx,json,data,gz}'],
+        // ...except the VLM's ONNX weights. Precaching is all-or-nothing:
+        // the 365MB decoder exceeds what Cache Storage will accept as a
+        // single entry (cache.put fails with "UnknownError", verified
+        // live 2026-10-19), and that one failure aborted the whole
+        // install, so the app got NO offline support at all. The weights
+        // instead go through the CacheFirst /models/ rule below, where a
+        // failed cache write only skips that one file. Same-origin either
+        // way, so zero-egress is unaffected.
+        globIgnores: ['models/**/*.onnx'],
         // Model/tesseract files are fetched by URL at runtime (not
         // referenced via import.meta.url the way JS/CSS chunks are), so
         // Workbox's build-time glob won't discover them as build assets.
