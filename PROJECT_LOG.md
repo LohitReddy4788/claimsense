@@ -251,7 +251,7 @@ Don't mark a phase done without actually running it — start the dev server, re
 
 ## Session 2026-10-19 — every remaining item worked through
 
-The user asked for everything left on the list to be done without stopping to ask. Four commits of real changes (`8037328`, `ad2a9d1`, `9a83f90`, `ad6a90c`), one experiment honestly stopped, and four more real bugs found (#23 plus three found while testing the new work). The local preview config (`launch.json`) was moved to `.claude/` and ignored via `.git/info/exclude`, keeping it out of the repo per the earlier "no tool config in the submission" decision.
+The user asked for everything left on the list to be done without stopping to ask. Four commits of real changes (`8037328`, `ad2a9d1`, `9a83f90`, `ad6a90c`), one experiment honestly stopped, and four more real bugs found (#23 plus three found while testing the new work). The local preview config (`launch.json`) was moved out of the repo and ignored locally via `.git/info/exclude` per the earlier "no tool config in the submission" decision.
 
 ### Offline install (`8037328`) — it had never worked; now verified with the server stopped
 Testing Phase 17b live for the first time found three real problems:
