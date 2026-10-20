@@ -66,3 +66,11 @@ browser (PGlite, WebAssembly, shared across tabs via a leader-elected
 worker) + OPFS for local storage, ONNX Runtime Web (WebGPU/WASM) for on-device inference,
 Tesseract.js for OCR, XState for pipeline orchestration, SheetJS for XLSX
 export.
+
+## Credits
+
+Built on open-source software: text recognition by Tesseract OCR /
+Tesseract.js, the on-device vision-language model SmolVLM-500M-Instruct by
+Hugging Face, in-browser PostgreSQL by PGlite (ElectricSQL), PDF rendering
+by PDF.js, and spreadsheet export by SheetJS, among others. Full list and
+licenses: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
