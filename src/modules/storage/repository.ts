@@ -1,6 +1,7 @@
 import { getPg, placeholder, selectList, toParam, toRecord, TABLES, type Row, type TableMap } from './pg'
 import type {
   AuditLogRecord,
+  ClaimReportRecord,
   ClaimRecord,
   PolicyRecord,
   PolicySettingsRecord,
@@ -92,6 +93,34 @@ export const getClaim = (claimId: string) => selectOne<ClaimRecord>(TABLES.claim
 export const addClaim = (c: ClaimRecord) => insert(TABLES.claims, c)
 export const updateClaim = (claimId: string, patch: Partial<ClaimRecord>) =>
   updateFields(TABLES.claims, claimId, patch)
+
+// Expense reports
+export const listReports = () =>
+  selectAll<ClaimReportRecord>(TABLES.claimReports, 'ORDER BY submitted_at DESC')
+
+/** Inserts the report and links its claims in ONE transaction, and only
+ * claims still approved and not yet in a report: if any of them changed
+ * since the caller read them (another tab submitted it first), nothing is
+ * written and this throws, so a claim can never land in two reports. */
+export async function submitReport(report: ClaimReportRecord, claimIds: string[]): Promise<void> {
+  const pg = await getPg()
+  const table = TABLES.claimReports
+  await pg.transaction(async (tx) => {
+    await tx.query(
+      `INSERT INTO ${table.sql} (${table.cols.map((c) => c[0]).join(', ')})
+       VALUES (${table.cols.map(([, , kind], i) => placeholder(kind, i + 1)).join(', ')})`,
+      table.cols.map(([, field, kind]) => toParam(kind, (report as unknown as Row)[field])),
+    )
+    const linked = await tx.query(
+      `UPDATE claims SET report_id = $1
+       WHERE claim_id = ANY($2::text[]) AND status = 'approved' AND report_id IS NULL`,
+      [report.reportId, claimIds],
+    )
+    if (linked.affectedRows !== claimIds.length) {
+      throw new Error('Some of these claims changed or were already submitted. Refresh and try again.')
+    }
+  })
+}
 
 // Audit log
 export const listAuditLogs = (order: 'asc' | 'desc' = 'asc') =>

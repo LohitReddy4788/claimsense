@@ -3,9 +3,9 @@ import * as repo from '../../modules/storage/repository'
 import { processDocument } from '../../modules/document-processing/processDocument'
 import { extractReceipt } from '../extraction/extractReceipt'
 import { validateExtraction } from '../../modules/validation/validateExtraction'
-import { classifyCategory } from '../category/classifyCategory'
+import { classifyCategory, classifyLineItems } from '../category/classifyCategory'
 import { reconcileTravel } from '../travel/reconcileTravel'
-import { evaluatePolicy } from '../../modules/policy/policyEngine'
+import { evaluateClaimPolicy } from '../../modules/policy/policyEngine'
 import { populateClaim } from '../sheet/populateClaim'
 import type { DetectedFileKind } from '../../modules/validation/fileSignature'
 import type { ValidatedReceipt } from '../../modules/validation/validateExtraction'
@@ -100,9 +100,10 @@ export const orchestratorMachine = setup({
           repo.getPolicySettings(),
         ])
         const reconciliation = reconcileTravel(validated.data, input.employeeId, currentTravelRequests)
-        const policy = evaluatePolicy(
+        const policy = evaluateClaimPolicy(
           validated.data,
           category.category,
+          classifyLineItems(validated.data, category.category),
           currentPolicies,
           currentSettings ?? DEFAULT_POLICY_SETTINGS,
         )

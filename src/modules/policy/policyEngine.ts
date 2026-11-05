@@ -1,5 +1,5 @@
 import type { ExtractedReceiptData } from '../../types/extraction'
-import type { ExpenseCategory } from '../../types/category'
+import type { ExpenseCategory, LineItemCategory } from '../../types/category'
 import type { PolicyRecord, PolicySettingsRecord } from '../../types/records'
 import type { PolicyCheckResult } from '../../types/policy'
 import { normalizeCurrency } from '../../utils/currency'
@@ -151,4 +151,36 @@ export function evaluatePolicy(
     convertedAmount: conversion.converted,
     baseCurrency: settings.baseCurrency,
   }
+}
+
+/** The whole receipt against its own category's limit, then any line items
+ * in a different category against theirs (added in the pre-submission
+ * audit). A $310 hotel bill can pass the Lodging limit while carrying a
+ * $120 restaurant charge that is over the Meals limit; the bill's total
+ * alone never showed that. Line items in the receipt's own category are
+ * already covered by the total, and a category with no limit configured
+ * isn't flagged here: the receipt itself already has a verdict. */
+export function evaluateClaimPolicy(
+  data: ExtractedReceiptData,
+  category: ExpenseCategory,
+  lineItems: LineItemCategory[],
+  policies: PolicyRecord[],
+  settings: PolicySettingsRecord,
+): PolicyCheckResult {
+  const main = evaluatePolicy(data, category, policies, settings)
+  if (main.status !== 'PASS') return main
+
+  const subtotals = new Map<ExpenseCategory, number>()
+  for (const item of lineItems) {
+    if (item.category === category || item.amount === null || item.amount <= 0) continue
+    subtotals.set(item.category, (subtotals.get(item.category) ?? 0) + item.amount)
+  }
+  for (const [lineCategory, subtotal] of subtotals) {
+    if (!policies.some((p) => p.category.toLowerCase() === lineCategory.toLowerCase())) continue
+    const result = evaluatePolicy({ ...data, amount: subtotal }, lineCategory, policies, settings)
+    if (result.status !== 'PASS') {
+      return { ...result, message: `${lineCategory} line items on this ${category} receipt: ${result.message}` }
+    }
+  }
+  return main
 }

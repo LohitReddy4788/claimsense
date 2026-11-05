@@ -1,6 +1,6 @@
 <svg width="680" height="980" viewBox="0 0 680 980" xmlns="http://www.w3.org/2000/svg" role="img">
 <title>ClaimSense architecture</title>
-<desc>The actual pipeline as implemented. An Orchestrator Agent (an XState state machine with retries) drives each receipt through the agents: receipt upload, ingest and validate, extraction (OCR first, on-device AI as fallback), category classification, then travel reconciliation and policy check running independently in parallel, merging into claim population, human review, approve and submit, export to xlsx, and manual handoff to finance outside the device. Local storage holds all data plus a SHA-256 audit log written at every step. Admin-entered policy limits feed the policy check.</desc>
+<desc>The actual pipeline as implemented. An Orchestrator Agent (an XState state machine with retries) drives each receipt through the agents: receipt upload, ingest and validate, extraction (OCR first, on-device AI as fallback), category classification, then travel reconciliation and policy check running independently in parallel, merging into claim population, human review and approval of each receipt, one-click submission of the approved receipts as an expense report, export to xlsx, and manual handoff to finance outside the device. Local storage holds all data plus a SHA-256 audit log written at every step. Admin-entered policy limits feed the policy check.</desc>
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
 <path d="M2 1L8 5L2 9" fill="none" stroke="#444441" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -72,8 +72,8 @@ text { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; fill:
 <line x1="340" y1="608" x2="340" y2="630" class="arr" marker-end="url(#arrow)"/>
 
 <rect class="box gray" x="240" y="630" width="200" height="48" rx="4"/>
-<text x="340" y="650" text-anchor="middle" class="th">approve &amp; submit</text>
-<text x="340" y="668" text-anchor="middle" class="ts">one click, audit-logged</text>
+<text x="340" y="650" text-anchor="middle" class="th">submit expense report</text>
+<text x="340" y="668" text-anchor="middle" class="ts">approved receipts, one click</text>
 <line x1="340" y1="678" x2="340" y2="700" class="arr" marker-end="url(#arrow)"/>
 
 <rect class="box gray" x="240" y="700" width="200" height="48" rx="4"/>

@@ -107,6 +107,7 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
     duplicateOfClaimId,
     lineItemReviewReason: integrityCheck.reason,
     status: needsReview ? 'review' : 'draft',
+    reportId: null,
     createdAt: new Date().toISOString(),
     approvedAt: null,
   }

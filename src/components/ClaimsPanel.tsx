@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Download, Loader2, Save, ShieldCheck, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User } from 'lucide-react'
+import { Download, Loader2, Save, ShieldCheck, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { editClaim, approveClaim } from '../agents/review/reviewClaim'
 import { exportApprovedClaims } from '../agents/export/exportClaims'
+import { submitReport, readyForReport, totalsByCurrency } from '../agents/review/submitReport'
 import { EXPENSE_CATEGORIES } from '../types/category'
 import { dateReadings, normalizeReceiptDate } from '../utils/receiptDate'
 import { LoadingState, errorText } from './LoadingState'
-import type { ClaimRecord, ReceiptRecord } from '../types/records'
+import type { ClaimRecord, ClaimReportRecord, ReceiptRecord } from '../types/records'
 
 interface EditBuffer {
   vendor: string
@@ -50,14 +51,19 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
   const [exporting, setExporting] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [reports, setReports] = useState<ClaimReportRecord[]>([])
+  const [reportMessage, setReportMessage] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState<string | null>(null)
 
   async function refresh() {
     try {
-      const [allClaims, allReceipts] = await Promise.all([
+      const [allClaims, allReceipts, allReports] = await Promise.all([
         repo.listClaims(),
         repo.listReceipts(),
+        repo.listReports(),
       ])
       setClaims(allClaims)
+      setReports(allReports)
       setReceiptsById(Object.fromEntries(allReceipts.map((r) => [r.receiptId, r])))
       // Seed edit buffers for any claim that doesn't have one yet — never
       // clobber a buffer the user is actively editing.
@@ -144,6 +150,28 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
     }
   }
 
+  async function handleSubmitReport(employeeId: string) {
+    setSubmitting(employeeId)
+    const result = await submitReport(employeeId)
+    setReportMessage(
+      result.success
+        ? `✓ Submitted ${result.report.reportId}: ${result.report.claimCount} claim(s) for ${result.report.employeeId}`
+        : `⚠ ${result.reason}`,
+    )
+    setSubmitting(null)
+    await refresh()
+  }
+
+  // Employees with approved claims not yet in a report, each with what a
+  // report would contain right now.
+  const readyEmployees = [...new Set(claims.filter((c) => c.employeeId).map((c) => c.employeeId!.trim().toUpperCase()))]
+    .map((employeeId) => ({ employeeId, ready: readyForReport(claims, employeeId) }))
+    .filter((e) => e.ready.length > 0)
+  const formatTotals = (totals: Record<string, number>) =>
+    Object.entries(totals)
+      .map(([currency, amount]) => `${amount.toFixed(2)} ${currency}`)
+      .join(' + ') || '—'
+
   async function handleExport() {
     setExporting(true)
     const result = await exportApprovedClaims()
@@ -172,6 +200,56 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
         </button>
       </div>
       {exportMessage && <p className="mt-2 text-xs text-white/60">{exportMessage}</p>}
+
+      {loaded && (readyEmployees.length > 0 || reports.length > 0 || reportMessage) && (
+        <section className="mt-4 rounded-2xl border border-white/20 p-4">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-white">
+            <FolderCheck className="h-4 w-4" strokeWidth={1.75} />
+            Expense reports
+          </p>
+          <p className="mt-0.5 text-xs text-white/50">
+            Approve each receipt below, then submit them together as one expense claim.
+          </p>
+          {readyEmployees.map(({ employeeId, ready }) => (
+            <div
+              key={employeeId}
+              className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/15 px-3 py-2.5 text-sm"
+            >
+              <span className="text-white/80">
+                <span className="font-medium text-white">{employeeId}</span> · {ready.length} approved claim(s)
+                ready · {formatTotals(totalsByCurrency(ready))}
+              </span>
+              <button
+                type="button"
+                disabled={submitting !== null}
+                onClick={() => handleSubmitReport(employeeId)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-white bg-white px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-white/90 disabled:opacity-60"
+              >
+                {submitting === employeeId ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+                ) : (
+                  <Send className="h-3.5 w-3.5" strokeWidth={1.75} />
+                )}
+                Submit expense report
+              </button>
+            </div>
+          ))}
+          {reportMessage && <p className="mt-2 text-xs text-white/60">{reportMessage}</p>}
+          {reports.length > 0 && (
+            <ul className="mt-3 space-y-1 text-xs text-white/60">
+              {reports.map((r) => (
+                <li key={r.reportId} className="flex flex-wrap gap-x-3">
+                  <span className="font-medium text-white/80">{r.reportId}</span>
+                  <span>{r.employeeId}</span>
+                  <span>{r.claimCount} claim(s)</span>
+                  <span>{formatTotals(r.totals)}</span>
+                  <span>submitted {new Date(r.submittedAt).toLocaleString()}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       {!loaded ? (
         <LoadingState error={loadError} />
       ) : claims.length === 0 ? (
@@ -333,7 +411,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                       className="inline-flex items-center gap-1.5 rounded-lg border border-white bg-white px-3.5 py-1.5 text-xs font-medium text-black transition-colors hover:bg-white/90"
                     >
                       <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
-                      Approve &amp; submit
+                      Approve
                     </button>
                     {message[c.claimId] && (
                       <span className="text-xs text-white/50">{message[c.claimId]}</span>
@@ -344,6 +422,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                   <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-white">
                     <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
                     Approved {c.approvedAt && new Date(c.approvedAt).toLocaleString()}
+                    {c.reportId ? ` · submitted in ${c.reportId}` : ' · not yet submitted in a report'}
                   </p>
                 )}
               </li>

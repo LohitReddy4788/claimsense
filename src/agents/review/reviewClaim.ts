@@ -1,6 +1,7 @@
 import * as repo from '../../modules/storage/repository'
 import { appendAuditEntry } from '../../modules/audit/auditLog'
-import { evaluatePolicy } from '../../modules/policy/policyEngine'
+import { evaluateClaimPolicy } from '../../modules/policy/policyEngine'
+import { reconcileTravel } from '../travel/reconcileTravel'
 import type { ExpenseCategory } from '../../types/category'
 import type { ClaimRecord } from '../../types/records'
 
@@ -9,16 +10,20 @@ export type ClaimEditableFields = Pick<ClaimRecord, 'vendor' | 'amount' | 'curre
 const DEFAULT_POLICY_SETTINGS = { id: 'default' as const, baseCurrency: 'USD', rates: {} }
 
 /** Applies a human correction to a claim's extracted fields, then re-runs
- * the Policy Engine whenever the edit touched something it depends on
- * (amount, currency or category). Found in the pre-submission audit: the
- * policy result used to stay as originally extracted, so correcting a
- * misread $50 meal to $500 still showed — and exported — PASS against a
- * $75 limit. A re-check that turns up a problem moves a draft back to
- * review, and both the edit and the new result go on the audit trail.
- * Travel reconciliation is not re-run: it depends on the date and
- * destination, and its link is shown alongside for the reviewer to judge.
- * Refuses to edit an approved claim — once a human has signed off, its
- * values are what was submitted, and changing them would rewrite history. */
+ * whatever depended on them, so what's approved and exported matches what
+ * the reviewer sees:
+ * - the Policy Engine, when amount, currency or category changed (found in
+ *   the pre-submission audit: correcting a misread $50 meal to $500 still
+ *   showed, and exported, PASS against a $75 limit). Line items whose
+ *   category was inherited from the receipt follow a category change.
+ * - the Travel Reconciler, when the date or vendor changed (a date OCR
+ *   misread or missed is exactly what a reviewer fixes). Skipped for
+ *   claims created before the employee was stored.
+ * A re-check that turns up a problem moves a draft to review; it never
+ * clears a review flag, which may have other causes (a duplicate, say).
+ * Each change of result goes on the audit trail. Refuses to edit an
+ * approved claim: once a human has signed off, its values are what was
+ * submitted, and changing them would rewrite history. */
 export async function editClaim(claimId: string, patch: Partial<ClaimEditableFields>): Promise<void> {
   const before = await repo.getClaim(claimId)
   if (!before) throw new Error(`No claim found with id ${claimId}.`)
@@ -30,31 +35,49 @@ export async function editClaim(claimId: string, patch: Partial<ClaimEditableFie
     .join(', ')
   await appendAuditEntry(claimId, 'CLAIM_EDITED', fields || '(no fields changed)')
 
-  if (!('amount' in patch || 'currency' in patch || 'category' in patch)) return
-
   const after = { ...before, ...patch }
-  const [policies, settings] = await Promise.all([repo.listPolicies(), repo.getPolicySettings()])
-  const policy = evaluatePolicy(
-    { vendor: after.vendor, amount: after.amount, currency: after.currency, date: after.date, lineItems: [] },
-    after.category as ExpenseCategory,
-    policies,
-    settings ?? DEFAULT_POLICY_SETTINGS,
-  )
-  if (policy.status === before.policyResult && policy.reasonCode === before.policyReasonCode) return
+  const data = { vendor: after.vendor, amount: after.amount, currency: after.currency, date: after.date, lineItems: [] }
+  const updates: Partial<ClaimRecord> = {}
+  let flagged = false
 
-  await repo.updateClaim(claimId, {
-    policyResult: policy.status,
-    policyReasonCode: policy.reasonCode,
-    // Only ever tightens: a re-check that now passes leaves a review claim
-    // in review, since it may be flagged for other reasons (a duplicate,
-    // inconsistent line items) the edit didn't address.
-    ...(policy.status !== 'PASS' && before.status === 'draft' ? { status: 'review' as const } : {}),
-  })
-  await appendAuditEntry(
-    claimId,
-    'POLICY_REEVALUATED',
-    `${before.policyResult ?? '—'} → ${policy.status}${policy.reasonCode ? ` (${policy.reasonCode})` : ''}: ${policy.message}`,
-  )
+  if ('amount' in patch || 'currency' in patch || 'category' in patch) {
+    const category = after.category as ExpenseCategory
+    const lineItems = after.lineItems.map((item) => (item.inherited ? { ...item, category } : item))
+    if ('category' in patch) updates.lineItems = lineItems
+    const [policies, settings] = await Promise.all([repo.listPolicies(), repo.getPolicySettings()])
+    const policy = evaluateClaimPolicy(data, category, lineItems, policies, settings ?? DEFAULT_POLICY_SETTINGS)
+    if (policy.status !== before.policyResult || policy.reasonCode !== before.policyReasonCode) {
+      updates.policyResult = policy.status
+      updates.policyReasonCode = policy.reasonCode
+      await appendAuditEntry(
+        claimId,
+        'POLICY_REEVALUATED',
+        `${before.policyResult ?? '—'} → ${policy.status}${policy.reasonCode ? ` (${policy.reasonCode})` : ''}: ${policy.message}`,
+      )
+    }
+    flagged ||= policy.status !== 'PASS'
+  }
+
+  if (('date' in patch || 'vendor' in patch) && before.employeeId) {
+    const match = reconcileTravel(
+      { ...data, lineItems: after.lineItems },
+      before.employeeId,
+      await repo.listTravelRequests(),
+    )
+    if (match.travelRequestId !== before.travelRequestId || match.status !== before.travelMatch) {
+      updates.travelRequestId = match.travelRequestId
+      updates.travelMatch = match.status
+      await appendAuditEntry(
+        claimId,
+        'TRAVEL_REMATCHED',
+        `${before.travelMatch ?? '—'} → ${match.status}${match.travelRequestId ? ` (${match.travelRequestId})` : ''}: ${match.reason}`,
+      )
+    }
+    flagged ||= match.status === 'REVIEW'
+  }
+
+  if (flagged && before.status === 'draft') updates.status = 'review'
+  if (Object.keys(updates).length > 0) await repo.updateClaim(claimId, updates)
 }
 
 export type ApproveResult =

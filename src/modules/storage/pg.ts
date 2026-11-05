@@ -65,11 +65,20 @@ CREATE TABLE IF NOT EXISTS claims (
   created_at              TIMESTAMPTZ NOT NULL,
   approved_at             TIMESTAMPTZ
 );
+CREATE TABLE IF NOT EXISTS claim_reports (
+  report_id     TEXT PRIMARY KEY,
+  employee_id   TEXT NOT NULL,
+  claim_count   INTEGER NOT NULL CHECK (claim_count > 0),
+  totals        JSONB NOT NULL,
+  submitted_at  TIMESTAMPTZ NOT NULL
+);
+
 -- Added 2026-11-05 (pre-submission audit); ADD COLUMN IF NOT EXISTS so a
 -- database created before then gains them on its next start.
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS employee_id TEXT;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS travel_match TEXT;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS line_items JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS report_id TEXT REFERENCES claim_reports(report_id);
 CREATE INDEX IF NOT EXISTS idx_claims_receipt ON claims(receipt_id);
 CREATE INDEX IF NOT EXISTS idx_claims_employee ON claims(employee_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
@@ -146,8 +155,15 @@ export const TABLES = {
       ['travel_request_id', 'travelRequestId'], ['travel_match', 'travelMatch'],
       ['line_items', 'lineItems', 'jsonb'], ['policy_result', 'policyResult'],
       ['policy_reason_code', 'policyReasonCode'], ['duplicate_of_claim_id', 'duplicateOfClaimId'],
-      ['line_item_review_reason', 'lineItemReviewReason'], ['status', 'status'],
+      ['line_item_review_reason', 'lineItemReviewReason'], ['status', 'status'], ['report_id', 'reportId'],
       ['created_at', 'createdAt', 'timestamptz'], ['approved_at', 'approvedAt', 'timestamptz'],
+    ],
+  },
+  claimReports: {
+    sql: 'claim_reports', pk: 'report_id', pkField: 'reportId',
+    cols: [
+      ['report_id', 'reportId'], ['employee_id', 'employeeId'], ['claim_count', 'claimCount', 'int8'],
+      ['totals', 'totals', 'jsonb'], ['submitted_at', 'submittedAt', 'timestamptz'],
     ],
   },
   auditLogs: {

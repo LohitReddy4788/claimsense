@@ -114,6 +114,16 @@ export function UploadReceiptsPanel() {
         // this receipt's preview/extract button absent rather than
         // pretending a restore succeeded.
         console.error(`Could not restore file for receipt ${receipt.receiptId}:`, e)
+        // Said on the card too, not only in the console (pre-submission
+        // audit): its claim and audit entries are intact, but it can't be
+        // previewed or extracted again without re-uploading.
+        setPreviews((prev) => ({
+          ...prev,
+          [receipt.receiptId]: {
+            status: 'failed',
+            reason: "the original file is no longer in this browser's storage (its claim and audit trail are unaffected); re-upload it to extract again",
+          },
+        }))
       }
     }
   }
@@ -162,7 +172,7 @@ export function UploadReceiptsPanel() {
   async function runExtraction(receiptId: string, fileHash: string, kind: DetectedFileKind) {
     // Found in the pre-submission audit: an empty "Claiming as" built
     // claims that belonged to nobody.
-    const claimant = employeeId.trim()
+    const claimant = employeeId.trim().toUpperCase()
     if (!claimant) {
       setError('Enter who these receipts are for ("Claiming as") before extracting.')
       return

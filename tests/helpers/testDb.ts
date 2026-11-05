@@ -27,6 +27,6 @@ export async function currentDb(): Promise<PGlite> {
 export async function resetDb(): Promise<void> {
   const pg = await currentDb()
   await pg.exec(
-    'TRUNCATE claims, receipts, travel_requests, policies, policy_settings, audit_logs, app_meta CASCADE',
+    'TRUNCATE claims, claim_reports, receipts, travel_requests, policies, policy_settings, audit_logs, app_meta CASCADE',
   )
 }

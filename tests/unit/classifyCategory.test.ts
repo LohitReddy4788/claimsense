@@ -66,6 +66,11 @@ describe('Category Classifier Agent', () => {
     expect(classifyCategory(receipt(vendor)).category).toBe(expected)
   })
 
+  it('lets the vendor decide a mixed bill; line items only break ties (audit fix)', () => {
+    expect(classifyCategory(receipt('Boston Harbor Hotel', ['Room', 'Restaurant dinner'])).category).toBe('Lodging')
+    expect(classifyCategory(receipt('ACME Corp', ['Restaurant dinner', 'Lunch'])).category).toBe('Meals')
+  })
+
   it('lets "room service" (Meals) beat "room" (Lodging)', () => {
     expect(classifyCategory(receipt('Room service')).category).toBe('Meals')
   })

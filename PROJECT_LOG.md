@@ -328,10 +328,16 @@ Every form was driven with bad input in the browser, plus the SQL console with a
 
 Offline re-verified with the server stopped (no process on the port; a fetch from the page failed): the app loaded from the service worker and a receipt went through OCR → claim. The precache now includes the `.mjs` files (PDF.js worker, ONNX loader). Tests: 167.
 
+### Fourth pass the same day: the three gaps left earlier, now closed
+1. **Expense reports.** Each receipt is still reviewed and approved on its own, then "Submit expense report" bundles one employee's approved receipts into one submitted claim (`submitReport.ts`), with per-currency totals. This matches the brief's "a folder of receipts into a submitted expense claim". New `claim_reports` table plus `claims.report_id`. The report row and the claim links are written in one transaction that only takes claims still approved and unreported, so a claim can't land in two reports; tested with two submissions at the same instant. Logged as `REPORT_SUBMITTED`; exported as a "Reports" sheet and a Report ID column. The per-claim button is now "Approve".
+2. **Line items are checked against their own category's limit** (`evaluateClaimPolicy`). A $230 hotel bill within the Lodging limit, carrying a $120 restaurant line, is now flagged `MEALS_LIMIT_EXCEEDED` (verified with real OCR). **Found doing this:** a hotel bill with a "Restaurant dinner" line tied Lodging with Meals and became Other. The vendor's keywords now count double; line items break ties.
+3. **Correcting a claim re-runs the trip match** when the date or vendor changes (`TRAVEL_REMATCHED` in the audit log). A category change carries inherited line-item categories with it, and the policy re-check includes line items.
+
+Also: a receipt whose original file is missing from browser storage now says so on its card, not only in the console. Twice during this audit the test browser's file storage was emptied while its database survived. Both times it happened between sessions, and it couldn't be reproduced by reloading, clearing the offline cache, restarting the server or phone emulation. The app has no code path that deletes receipt files. Tests: 180.
+
 ### Known limits, stated plainly
-- Policy limits are still checked against the receipt total in its main category; line-item categories are recorded and exported but not checked against each category's own limit.
-- No grouping of several receipts into one claim report: each receipt is its own claim line, reviewed and approved on its own, then exported together. Left deliberately; a new workflow the night before submission was judged too risky.
-- Editing doesn't re-run travel reconciliation.
+- Report totals are per currency as printed; there's no single converted grand total, since the rate table exists for limit checks and isn't an exchange-rate source.
 - PDFs longer than 3 pages: only the first 3 are read (shown on the upload card).
+- An ambiguous date like 03/04/2026 is kept as printed; both readings are used for trip matching and the future-date check.
 - The CSP header covers workers only when served by `vite preview` (or a host configured the same way); the `<meta>` tag covers the page everywhere.
-- Claims created before 2026-11-05 have no employee or match status recorded.
+- Claims created before 2026-11-05 have no employee, match status or line items recorded, so they can't go into a report.

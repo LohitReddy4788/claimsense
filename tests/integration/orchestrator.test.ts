@@ -82,6 +82,15 @@ describe('Orchestrator Agent — full pipeline', () => {
     expect(result.success && result.validated.source).toBe('vlm')
   })
 
+  it('checks line items against their own category limit (audit fix)', async () => {
+    await repo.addPolicy({ policyId: 'p2', category: 'Meals', limitAmount: 75 })
+    runOcrFallback.mockResolvedValue(
+      ok({ ...hotel, amount: 240, lineItems: [{ description: 'Room', amount: 150 }, { description: 'Restaurant dinner', amount: 90 }] }),
+    )
+    const { result } = await run()
+    expect(result.success && result.built.policy).toMatchObject({ status: 'VIOLATION', reasonCode: 'MEALS_LIMIT_EXCEEDED' })
+  })
+
   it('does not link another employee’s trip', async () => {
     const { result } = await run('EMP999')
     expect(result.success && result.built.reconciliation?.status).toBe('UNMATCHED')

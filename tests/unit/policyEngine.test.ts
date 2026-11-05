@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { evaluatePolicy } from '../../src/modules/policy/policyEngine'
+import { evaluateClaimPolicy, evaluatePolicy } from '../../src/modules/policy/policyEngine'
 import type { ExtractedReceiptData } from '../../src/types/extraction'
 import type { PolicyRecord, PolicySettingsRecord } from '../../src/types/records'
 
@@ -86,5 +86,37 @@ describe('Policy Engine', () => {
   it.each([Number.NaN, 0, -1])('treats a broken conversion rate (%s) as unsupported', (rate) => {
     const r = evaluatePolicy(data(10, 'EUR'), 'Meals', policies, { ...settings, rates: { EUR: rate } })
     expect(r.reasonCode).toBe('CURRENCY_UNSUPPORTED')
+  })
+})
+
+describe('Policy Engine: line items against their own category (audit fix)', () => {
+  const line = (category: 'Meals' | 'Lodging' | 'Communication', amount: number | null, inherited = false) => ({
+    description: category, amount, category, inherited,
+  })
+
+  it('flags a restaurant charge over the Meals limit on a hotel bill that passes Lodging', () => {
+    const r = evaluateClaimPolicy(data(240), 'Lodging', [line('Lodging', 120), line('Meals', 90), line('Meals', 30)], policies, settings)
+    expect(r.status).toBe('VIOLATION')
+    expect(r.reasonCode).toBe('MEALS_LIMIT_EXCEEDED')
+    expect(r.message).toMatch(/^Meals line items on this Lodging receipt: 120.00 USD exceeds/)
+  })
+
+  it('passes when every category is within its limit', () => {
+    expect(evaluateClaimPolicy(data(240), 'Lodging', [line('Lodging', 200), line('Meals', 40)], policies, settings).status).toBe('PASS')
+  })
+
+  it('reports the receipt itself first', () => {
+    const r = evaluateClaimPolicy(data(400), 'Lodging', [line('Meals', 300)], policies, settings)
+    expect(r.reasonCode).toBe('LODGING_LIMIT_EXCEEDED')
+  })
+
+  it('ignores line items in categories with no limit, and items without an amount', () => {
+    expect(evaluateClaimPolicy(data(240), 'Lodging', [line('Communication', 999), line('Meals', null)], policies, settings).status).toBe('PASS')
+  })
+
+  it('converts line items in a foreign currency too', () => {
+    // 70 EUR = 77 USD > 75 Meals limit
+    const r = evaluateClaimPolicy(data(200, 'EUR'), 'Lodging', [line('Meals', 70)], policies, settings)
+    expect(r.reasonCode).toBe('MEALS_LIMIT_EXCEEDED')
   })
 })

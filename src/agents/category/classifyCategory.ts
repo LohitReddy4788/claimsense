@@ -73,24 +73,47 @@ interface CategoryScore {
  * one arbitrarily — found the tie case by testing "Airport Hotel
  * Restaurant" (equally Travel/Lodging/Meals by keyword count) and seeing
  * it silently pick Travel just because that category was checked first. */
+// The vendor says what kind of business it is; line items can mix (a hotel
+// bill lists a restaurant charge). Found in the pre-submission audit: once
+// line items carried "room" and "dinner", "Boston Harbor Hotel" with a
+// "Restaurant dinner" line tied Lodging with Meals and became Other. The
+// vendor's keywords now count double, and line items break ties.
+const VENDOR_WEIGHT = 2
+
 export function classifyCategory(data: ExtractedReceiptData): CategoryResult {
   const text = textToMatch(data)
   if (!text.trim()) {
     return { category: 'Other', confidence: 0, reason: 'No vendor or line-item text to classify from.' }
   }
-  return classifyText(text)
+  const vendor = (data.vendor ?? '').toLowerCase()
+  const items = data.lineItems.map((item) => item.description).join(' ').toLowerCase()
+  return pickCategory(
+    scoreText(vendor, VENDOR_WEIGHT).map((v, i) => {
+      const fromItems = scoreText(items, 1)[i]
+      return {
+        category: v.category,
+        score: v.score + fromItems.score,
+        matches: [...new Set([...v.matches, ...fromItems.matches])],
+      }
+    }),
+  )
 }
 
 function classifyText(text: string): CategoryResult {
-  const scores: CategoryScore[] = (
-    Object.entries(CATEGORY_KEYWORDS) as [Exclude<ExpenseCategory, 'Other'>, string[]][]
-  )
-    .map(([category, keywords]) => {
+  return pickCategory(scoreText(text, 1))
+}
+
+function scoreText(text: string, weight: number): CategoryScore[] {
+  return (Object.entries(CATEGORY_KEYWORDS) as [Exclude<ExpenseCategory, 'Other'>, string[]][]).map(
+    ([category, keywords]) => {
       const matches = keywords.filter((kw) => matchesKeyword(text, kw))
-      const score = matches.reduce((sum, kw) => sum + keywordWeight(kw), 0)
-      return { category, score, matches }
-    })
-    .filter((s) => s.score > 0)
+      return { category, score: matches.reduce((sum, kw) => sum + keywordWeight(kw) * weight, 0), matches }
+    },
+  )
+}
+
+function pickCategory(allScores: CategoryScore[]): CategoryResult {
+  const scores = allScores.filter((s) => s.score > 0)
 
   if (scores.length === 0) {
     return { category: 'Other', confidence: 0, reason: 'No category keyword matched vendor or line items.' }

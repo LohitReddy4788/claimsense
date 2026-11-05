@@ -75,10 +75,24 @@ export interface ClaimRecord {
    * database column rename.) */
   lineItemReviewReason: string | null
   status: 'draft' | 'review' | 'approved'
+  /** The expense report this approved claim was submitted in; null until
+   * then. */
+  reportId: string | null
   createdAt: string
   /** Set only when a human explicitly approves via the Review & Submit
    * step (Phase 11) — null means still draft/review, never approved. */
   approvedAt: string | null
+}
+
+/** One submitted expense claim: an employee's approved receipts, bundled
+ * and submitted together. Totals are per currency as printed, since a
+ * report can mix currencies and the rate table is only used for limits. */
+export interface ClaimReportRecord {
+  reportId: string
+  employeeId: string
+  claimCount: number
+  totals: Record<string, number>
+  submittedAt: string
 }
 
 export interface AuditLogRecord {

@@ -17,6 +17,7 @@ const { ingestReceipt } = await import('../../src/agents/ingestion/ingestReceipt
 const { populateClaim } = await import('../../src/agents/sheet/populateClaim')
 const { editClaim, approveClaim } = await import('../../src/agents/review/reviewClaim')
 const { buildApprovedClaimsWorkbook } = await import('../../src/agents/export/exportClaims')
+const { submitReport } = await import('../../src/agents/review/submitReport')
 const { verifyAuditChain } = await import('../../src/modules/audit/auditLog')
 const { evaluatePolicy } = await import('../../src/modules/policy/policyEngine')
 import type { ExtractedReceiptData } from '../../src/types/extraction'
@@ -34,13 +35,13 @@ beforeEach(async () => {
   await repo.putPolicySettings(SETTINGS)
 })
 
-async function ingestAndBuild(file: File, data: ExtractedReceiptData = meal) {
+async function ingestAndBuild(file: File, data: ExtractedReceiptData = meal, employeeId = 'EMP001') {
   const ingested = await ingestReceipt(file)
   if (!ingested.success) throw new Error(ingested.reason)
   const policy = evaluatePolicy(data, 'Meals', await repo.listPolicies(), SETTINGS)
   return populateClaim({
     receiptId: ingested.receipt.receiptId,
-    employeeId: 'EMP001',
+    employeeId,
     fileHash: ingested.receipt.fileHash,
     data,
     extractionStatus: 'valid',
@@ -219,5 +220,94 @@ describe('Claims spreadsheet export', () => {
     const v = await verifyAuditChain()
     expect(v.valid).toBe(true)
     expect(v.totalEntries).toBe(5) // ingested, created, edited, re-evaluated, approved
+  })
+})
+
+describe('Re-checks after a correction (audit fix)', () => {
+  beforeEach(async () => {
+    await repo.addTravelRequest({
+      requestId: 'TR-BOS', employeeId: 'EMP001', destination: 'Boston',
+      startDate: '2026-03-10', endDate: '2026-03-14', approvalStatus: 'approved',
+    })
+  })
+
+  it('re-runs the trip match when the date is corrected', async () => {
+    const claim = await ingestAndBuild(png('a.png'), { ...meal, vendor: 'Boston Bagel Cafe', date: '2026-06-01' })
+    expect(claim.travelMatch).toBe('UNMATCHED')
+    await editClaim(claim.claimId, { date: '2026-03-12' })
+    expect(await repo.getClaim(claim.claimId)).toMatchObject({ travelMatch: 'MATCHED', travelRequestId: 'TR-BOS' })
+    expect((await repo.listAuditLogs()).at(-1)?.action).toBe('TRAVEL_REMATCHED')
+  })
+
+  it('moves inherited line items with a category change, and checks them against their limit', async () => {
+    await repo.addPolicy({ policyId: 'p2', category: 'Lodging', limitAmount: 500 })
+    const claim = await ingestAndBuild(png('a.png'), {
+      ...meal,
+      amount: 300,
+      lineItems: [{ description: 'Suite upgrade', amount: 210 }, { description: 'Restaurant', amount: 90 }],
+    })
+    // Read as Meals: 300 > 75. The reviewer corrects it to Lodging.
+    await editClaim(claim.claimId, { category: 'Lodging' })
+    const edited = await repo.getClaim(claim.claimId)
+    expect(edited?.lineItems.map((i) => i.category)).toEqual(['Lodging', 'Meals'])
+    // 300 is within Lodging's 500, but the 90 restaurant line is over Meals' 75.
+    expect(edited).toMatchObject({ policyResult: 'VIOLATION', policyReasonCode: 'MEALS_LIMIT_EXCEEDED' })
+  })
+})
+
+describe('Expense reports: a folder of receipts as one submitted claim (audit fix)', () => {
+  async function approved(name: string, data: ExtractedReceiptData = meal, employeeId = 'EMP001') {
+    const claim = await ingestAndBuild(png(name, name), data, employeeId)
+    await approveClaim(claim.claimId)
+    return claim
+  }
+
+  it('bundles an employee’s approved claims, with per-currency totals', async () => {
+    const a = await approved('a.png', { ...meal, vendor: 'A', amount: 40 })
+    const b = await approved('b.png', { ...meal, vendor: 'B', amount: 12.5 })
+    const c = await approved('c.png', { ...meal, vendor: 'C', amount: 20, currency: 'EUR' })
+    await ingestAndBuild(png('draft.png', 'draft'), { ...meal, vendor: 'D' }) // not approved: left out
+    await approved('other.png', { ...meal, vendor: 'E' }, 'EMP002') // someone else: left out
+
+    const r = await submitReport('emp001')
+    expect(r.success).toBe(true)
+    if (!r.success) return
+    expect(r.report).toMatchObject({ employeeId: 'EMP001', claimCount: 3, totals: { USD: 52.5, EUR: 20 } })
+    for (const id of [a.claimId, b.claimId, c.claimId]) {
+      expect((await repo.getClaim(id))?.reportId).toBe(r.report.reportId)
+    }
+    expect(await repo.listReports()).toEqual([r.report])
+    expect((await repo.listAuditLogs()).at(-1)).toMatchObject({ entityId: r.report.reportId, action: 'REPORT_SUBMITTED' })
+    expect((await verifyAuditChain()).valid).toBe(true)
+  })
+
+  it('never puts a claim in two reports, even when submitted twice at once', async () => {
+    await approved('a.png')
+    const results = await Promise.all([submitReport('EMP001'), submitReport('EMP001')])
+    expect(results.filter((r) => r.success)).toHaveLength(1)
+    expect(await repo.listReports()).toHaveLength(1)
+    expect(await submitReport('EMP001')).toMatchObject({ success: false, reason: expect.stringMatching(/no approved claims/) })
+  })
+
+  it('refuses when nothing is approved', async () => {
+    await ingestAndBuild(png('a.png'))
+    expect(await submitReport('EMP001')).toMatchObject({ success: false })
+    expect(await submitReport('  ')).toMatchObject({ success: false })
+  })
+
+  it('exports the report and each claim’s report ID', async () => {
+    const claim = await approved('a.png')
+    const r = await submitReport('EMP001')
+    if (!r.success) throw new Error(r.reason)
+    const built = await buildApprovedClaimsWorkbook()
+    if (!built.success) throw new Error(built.reason)
+    const wb = XLSX.read(XLSX.write(built.workbook, { type: 'array', bookType: 'xlsx' }))
+    expect(XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets['Approved Claims'])[0]).toMatchObject({
+      'Claim ID': claim.claimId,
+      'Report ID': r.report.reportId,
+    })
+    expect(XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets['Reports'])).toEqual([
+      { 'Report ID': r.report.reportId, Employee: 'EMP001', Claims: 1, Totals: '40.00 USD', 'Submitted At': r.report.submittedAt },
+    ])
   })
 })

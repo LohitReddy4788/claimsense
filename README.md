@@ -45,7 +45,7 @@ sent to human review.
 ```bash
 npm run build    # production build (tsc + vite build)
 npm run preview  # serve the production build locally
-npm test         # 167 automated tests (Vitest), about 10 seconds
+npm test         # 180 automated tests (Vitest), about 10 seconds
 npm run lint     # oxlint
 ```
 
@@ -74,11 +74,12 @@ the in-browser end-to-end runs recorded in `PROJECT_LOG.md`.
   conversion table, and PDF-based policy import (suggestions only, never
   auto-saved).
 - **Travel Requests** — approved trips a receipt can be reconciled against.
-- **Claims** — the built claim, its policy result, and the human review/
-  approve step, with the employee, each line item's own category, and
-  whether the trip was matched or only suggested. Correcting the amount,
-  currency or category re-runs the policy check, and approving saves any
-  unsaved correction first.
+- **Claims** — each built claim with its policy result (line items are
+  checked against their own category's limit too), the employee, and
+  whether the trip was matched or only suggested. The employee corrects
+  and approves each receipt; corrections re-run the policy check and trip
+  match. "Submit expense report" then sends all of that employee's approved
+  receipts as one claim, with totals.
 - **Audit Logs** — a SHA-256 hash-chained, tamper-evident record of every
   action.
 - **Database (SQL)** — read-only SQL over the app's own on-device

@@ -28,6 +28,7 @@ function claimToRow(claim: ClaimRecord, receiptFileName: string) {
     'Duplicate Of': claim.duplicateOfClaimId ?? '',
     'Consistency Check': claim.lineItemReviewReason ?? '',
     'Approved At': claim.approvedAt ?? '',
+    'Report ID': claim.reportId ?? '',
   }
 }
 
@@ -71,6 +72,21 @@ export async function buildApprovedClaimsWorkbook(): Promise<WorkbookBuildResult
   )
   if (lineRows.length > 0) {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(lineRows), 'Line Items')
+  }
+
+  // The submitted expense claims themselves, one row per report.
+  const reports = await repo.listReports()
+  if (reports.length > 0) {
+    const reportRows = reports.map((r) => ({
+      'Report ID': r.reportId,
+      Employee: r.employeeId,
+      Claims: r.claimCount,
+      Totals: Object.entries(r.totals)
+        .map(([currency, amount]) => `${amount.toFixed(2)} ${currency}`)
+        .join(' + '),
+      'Submitted At': r.submittedAt,
+    }))
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(reportRows), 'Reports')
   }
 
   return { success: true, workbook, claimCount: approved.length }
