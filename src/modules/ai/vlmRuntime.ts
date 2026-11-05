@@ -14,6 +14,20 @@ env.allowRemoteModels = false
 env.allowLocalModels = true
 env.localModelPath = '/models/'
 
+// Found in the pre-submission audit, once a Content-Security-Policy made
+// it visible: unless wasmPaths is set, transformers.js points ONNX Runtime
+// at https://cdn.jsdelivr.net/npm/onnxruntime-web@…/dist/ for its engine
+// (.mjs + .wasm). The worker's fetch guard blocked the .wasm, but the .mjs
+// is loaded with import(), which that guard can't see. These URLs make
+// Vite bundle the same files from node_modules and serve them same-origin.
+// asyncify is the build transformers.js itself picks for WebGPU and WASM.
+if (env.backends.onnx.wasm) {
+  env.backends.onnx.wasm.wasmPaths = {
+    mjs: new URL('onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs', import.meta.url).href,
+    wasm: new URL('onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm', import.meta.url).href,
+  }
+}
+
 // smolvlm-256m-instruct was tried and reverted (2026-09-27) — see
 // PROJECT_LOG.md for the full measurement. Short version: it was
 // sometimes meaningfully faster (171s vs a 386s baseline) but on two

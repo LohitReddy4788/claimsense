@@ -52,6 +52,10 @@ export function UploadReceiptsPanel() {
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({})
   const [extractions, setExtractions] = useState<Record<string, ExtractState>>({})
   const [employeeId, setEmployeeId] = useState('EMP001')
+  // Receipts that already have a claim. Without this, after a reload every
+  // receipt showed "Extract" again, and clicking it built a second claim.
+  const [claimedIds, setClaimedIds] = useState<Set<string>>(new Set())
+  const [extractingAll, setExtractingAll] = useState(false)
   // Kept so "Extract" can hand the original File to the Orchestrator,
   // which does its own document-processing step (with retries) rather
   // than reusing the thumbnail's already-processed blob — the thumbnail
@@ -70,7 +74,9 @@ export function UploadReceiptsPanel() {
   async function refresh() {
     let all: ReceiptRecord[]
     try {
-      all = await repo.listReceipts()
+      const [receiptList, claims] = await Promise.all([repo.listReceipts(), repo.listClaims()])
+      all = receiptList
+      setClaimedIds(new Set(claims.map((c) => c.receiptId)))
     } catch (err) {
       console.error('UploadReceiptsPanel refresh failed:', err)
       setLoadError(errorText(err))
@@ -173,30 +179,49 @@ export function UploadReceiptsPanel() {
     }
   }
 
-  async function handleFile(file: File) {
+  /** Ingests every chosen file in turn — the problem statement's "folder
+   * of receipts", not one at a time. A rejected file is reported by name
+   * and doesn't stop the rest. */
+  async function handleFiles(picked: File[]) {
     setBusy(true)
     setError(null)
-    try {
-      const result = await ingestReceipt(file)
-      if (!result.success) {
-        setError(result.reason)
-        return
+    const rejected: string[] = []
+    for (const file of picked) {
+      try {
+        const result = await ingestReceipt(file)
+        if (!result.success) {
+          rejected.push(picked.length > 1 ? `${file.name}: ${result.reason}` : result.reason)
+          continue
+        }
+        // Mark restored BEFORE refresh() so its OPFS-restoration pass (which
+        // would otherwise not yet see this receipt in `files`/`previews`,
+        // since those two setState calls below haven't run yet) doesn't
+        // redundantly re-read the file we already have in hand and process
+        // it a second time in parallel.
+        restoredRef.current.add(result.receipt.receiptId)
+        setFiles((prev) => ({ ...prev, [result.receipt.receiptId]: file }))
+        // Fire and track separately — a processing failure shouldn't undo a successful ingest.
+        runProcessing(result.receipt.receiptId, file, result.receipt.fileType as DetectedFileKind)
+      } catch (e) {
+        rejected.push(`${file.name}: ${e instanceof Error ? e.message : 'Failed to store receipt'}`)
       }
-      // Mark restored BEFORE refresh() so its OPFS-restoration pass (which
-      // would otherwise not yet see this receipt in `files`/`previews`,
-      // since those two setState calls below haven't run yet) doesn't
-      // redundantly re-read the file we already have in hand and process
-      // it a second time in parallel.
-      restoredRef.current.add(result.receipt.receiptId)
-      await refresh()
-      setFiles((prev) => ({ ...prev, [result.receipt.receiptId]: file }))
-      // Fire and track separately — a processing failure shouldn't undo a successful ingest.
-      runProcessing(result.receipt.receiptId, file, result.receipt.fileType as DetectedFileKind)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to store receipt')
-    } finally {
-      setBusy(false)
     }
+    await refresh()
+    setError(rejected.length ? rejected.join(' · ') : null)
+    setBusy(false)
+  }
+
+  const pending = receipts.filter((r) => files[r.receiptId] && !extractions[r.receiptId] && !claimedIds.has(r.receiptId))
+
+  /** One after another, not in parallel: OCR and the on-device model each
+   * use one worker, so parallel runs only contend (see extractReceipt.ts). */
+  async function extractAll() {
+    setExtractingAll(true)
+    for (const r of pending) {
+      await runExtraction(r.receiptId, r.fileHash, r.fileType as DetectedFileKind)
+    }
+    setExtractingAll(false)
+    await refresh()
   }
 
   return (
@@ -207,7 +232,7 @@ export function UploadReceiptsPanel() {
             <UploadCloud className="h-5 w-5 text-white" strokeWidth={1.75} />
           </div>
           <div>
-            <p className="text-sm font-medium text-white">Add a receipt</p>
+            <p className="text-sm font-medium text-white">Add receipts</p>
             <p className="text-xs text-white/50">
               PDF, JPEG or PNG · checked by file content, not the extension · 15MB max
             </p>
@@ -215,15 +240,16 @@ export function UploadReceiptsPanel() {
         </div>
         <label className="inline-flex flex-none cursor-pointer items-center justify-center gap-2 rounded-lg border border-white bg-white px-4 py-2.5 text-sm font-medium text-black transition-colors hover:bg-white/90 active:bg-white/80">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.25} /> : <UploadCloud className="h-4 w-4" strokeWidth={2.25} />}
-          {busy ? 'Checking…' : 'Choose receipt file'}
+          {busy ? 'Checking…' : 'Choose receipt files'}
           <input
             type="file"
             accept=".pdf,.jpg,.jpeg,.png"
+            multiple
             className="hidden"
             disabled={busy}
             onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) handleFile(file)
+              const picked = Array.from(e.target.files ?? [])
+              if (picked.length > 0) handleFiles(picked)
               e.target.value = ''
             }}
           />
@@ -256,9 +282,22 @@ export function UploadReceiptsPanel() {
       )}
 
       <div className="mt-8">
-        <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
-          Stored receipts ({loaded ? receipts.length : '…'})
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
+            Stored receipts ({loaded ? receipts.length : '…'})
+          </p>
+          {(pending.length > 0 || extractingAll) && (
+            <button
+              type="button"
+              disabled={extractingAll}
+              onClick={extractAll}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white bg-white px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-white/90 disabled:opacity-60"
+            >
+              {extractingAll ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} /> : <Cpu className="h-3.5 w-3.5" strokeWidth={1.75} />}
+              {extractingAll ? 'Extracting…' : `Extract all (${pending.length})`}
+            </button>
+          )}
+        </div>
         {!loaded ? (
           <LoadingState error={loadError} />
         ) : receipts.length === 0 ? (
@@ -313,8 +352,15 @@ export function UploadReceiptsPanel() {
                     )}
                     {files[r.receiptId] && (
                       <div className="mt-3">
-                        {!extraction && (
+                        {!extraction && claimedIds.has(r.receiptId) && (
+                          <p className="inline-flex items-center gap-1.5 text-xs text-white/60">
+                            <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                            Claim already created — see Claims
+                          </p>
+                        )}
+                        {!extraction && !claimedIds.has(r.receiptId) && (
                           <button
+                            disabled={extractingAll}
                             type="button"
                             onClick={() => runExtraction(r.receiptId, r.fileHash, r.fileType as DetectedFileKind)}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-white/30 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:border-white hover:bg-white/5"
@@ -422,7 +468,7 @@ export function UploadReceiptsPanel() {
                                     <div>
                                       <dt className="text-[10px] uppercase tracking-wide text-white/40">Amount</dt>
                                       <dd className="font-medium text-white">
-                                        {validated.data.amount ?? '—'} {validated.data.currency ?? ''}
+                                        {validated.data.amount === null ? '—' : validated.data.amount.toFixed(2)} {validated.data.currency ?? ''}
                                       </dd>
                                     </div>
                                     <div>

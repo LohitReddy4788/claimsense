@@ -1,22 +1,60 @@
 import * as repo from '../../modules/storage/repository'
 import { appendAuditEntry } from '../../modules/audit/auditLog'
+import { evaluatePolicy } from '../../modules/policy/policyEngine'
+import type { ExpenseCategory } from '../../types/category'
 import type { ClaimRecord } from '../../types/records'
 
 export type ClaimEditableFields = Pick<ClaimRecord, 'vendor' | 'amount' | 'currency' | 'date' | 'category'>
 
-/** Applies a human correction to a claim's extracted fields. Does not
- * re-run policy/reconciliation against the edit — Phase 11's job is
- * capturing the employee's correction and gating submission on it, not
- * re-deriving downstream results (that would be a bigger, separate
- * feature: "re-evaluate on edit"). An edited claim still shows its
- * original policy/reconciliation results alongside the correction so
- * nothing is silently hidden. */
+const DEFAULT_POLICY_SETTINGS = { id: 'default' as const, baseCurrency: 'USD', rates: {} }
+
+/** Applies a human correction to a claim's extracted fields, then re-runs
+ * the Policy Engine whenever the edit touched something it depends on
+ * (amount, currency or category). Found in the pre-submission audit: the
+ * policy result used to stay as originally extracted, so correcting a
+ * misread $50 meal to $500 still showed — and exported — PASS against a
+ * $75 limit. A re-check that turns up a problem moves a draft back to
+ * review, and both the edit and the new result go on the audit trail.
+ * Travel reconciliation is not re-run: it depends on the date and
+ * destination, and its link is shown alongside for the reviewer to judge.
+ * Refuses to edit an approved claim — once a human has signed off, its
+ * values are what was submitted, and changing them would rewrite history. */
 export async function editClaim(claimId: string, patch: Partial<ClaimEditableFields>): Promise<void> {
+  const before = await repo.getClaim(claimId)
+  if (!before) throw new Error(`No claim found with id ${claimId}.`)
+  if (before.status === 'approved') throw new Error('This claim is already approved and can no longer be edited.')
+
   await repo.updateClaim(claimId, patch)
   const fields = Object.entries(patch)
     .map(([key, value]) => `${key}: ${value ?? '—'}`)
     .join(', ')
   await appendAuditEntry(claimId, 'CLAIM_EDITED', fields || '(no fields changed)')
+
+  if (!('amount' in patch || 'currency' in patch || 'category' in patch)) return
+
+  const after = { ...before, ...patch }
+  const [policies, settings] = await Promise.all([repo.listPolicies(), repo.getPolicySettings()])
+  const policy = evaluatePolicy(
+    { vendor: after.vendor, amount: after.amount, currency: after.currency, date: after.date, lineItems: [] },
+    after.category as ExpenseCategory,
+    policies,
+    settings ?? DEFAULT_POLICY_SETTINGS,
+  )
+  if (policy.status === before.policyResult && policy.reasonCode === before.policyReasonCode) return
+
+  await repo.updateClaim(claimId, {
+    policyResult: policy.status,
+    policyReasonCode: policy.reasonCode,
+    // Only ever tightens: a re-check that now passes leaves a review claim
+    // in review, since it may be flagged for other reasons (a duplicate,
+    // inconsistent line items) the edit didn't address.
+    ...(policy.status !== 'PASS' && before.status === 'draft' ? { status: 'review' as const } : {}),
+  })
+  await appendAuditEntry(
+    claimId,
+    'POLICY_REEVALUATED',
+    `${before.policyResult ?? '—'} → ${policy.status}${policy.reasonCode ? ` (${policy.reasonCode})` : ''}: ${policy.message}`,
+  )
 }
 
 export type ApproveResult =

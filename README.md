@@ -45,18 +45,37 @@ sent to human review.
 ```bash
 npm run build    # production build (tsc + vite build)
 npm run preview  # serve the production build locally
+npm test         # 112 automated tests (Vitest), about 10 seconds
+npm run lint     # oxlint
 ```
+
+## Tests
+
+`tests/unit/` covers each agent's logic on its own: the category
+classifier, travel reconciler, policy engine, OCR text parser, the
+receipt consistency checks and the OCR-first/AI-fallback validation gate.
+`tests/integration/` runs the agents together against the real
+PostgreSQL engine (PGlite, in memory) with the app's real schema:
+ingestion, duplicate detection, claim building, review and approval,
+policy re-checks after an edit, the `.xlsx` export (written and read
+back), the audit hash chain including tamper detection, and the
+Orchestrator end to end, with its retries, give-up path and AI fallback.
+Only the steps that need a real browser (canvas, Tesseract, the ONNX
+model) are replaced by controllable fakes there; those are covered by
+the in-browser end-to-end runs recorded in `PROJECT_LOG.md`.
 
 ## What's in here
 
-- **Upload Receipts** — ingest a PDF/JPEG/PNG, extract vendor/amount/date/
-  currency via OCR-first-then-AI-fallback.
+- **Upload Receipts** — ingest a whole folder of PDF/JPEG/PNG receipts at
+  once, then "Extract all" runs each through the Orchestrator: vendor/
+  amount/date/currency/line items via OCR first, on-device AI as fallback.
 - **Policies** — company spending limits per category, a local currency
   conversion table, and PDF-based policy import (suggestions only, never
   auto-saved).
 - **Travel Requests** — approved trips a receipt can be reconciled against.
 - **Claims** — the built claim, its policy result, and the human review/
-  approve step.
+  approve step. Correcting the amount, currency or category re-runs the
+  policy check, and approving saves any unsaved correction first.
 - **Audit Logs** — a SHA-256 hash-chained, tamper-evident record of every
   action.
 - **Database (SQL)** — read-only SQL over the app's own on-device

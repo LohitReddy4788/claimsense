@@ -8,7 +8,7 @@ import { PGliteWorker } from '@electric-sql/pglite/worker'
 // Dexie was the store and this was a write-behind mirror — see
 // migrateFromDexie() for how existing data carries over.)
 
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS receipts (
   receipt_id   TEXT PRIMARY KEY,
   file_name    TEXT NOT NULL,

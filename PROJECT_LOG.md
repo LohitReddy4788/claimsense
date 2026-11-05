@@ -287,3 +287,29 @@ Verified: 31 unit cases including the real OCR text; live OCR on cash/doctored/f
 - `import('/src/…')` from a test script after editing that file can return a **stale cached module** — reload the page first.
 - Vite's dev server on Windows occasionally misses a file-change event mid-edit and keeps serving a broken intermediate transform (blank app, "X is not defined"), while `tsc -b`/`vite build` stay clean. Restart the dev server.
 - Ports 5173/5174 are often taken on this machine; check `preview_logs` for the port Vite actually bound.
+
+## Session 2026-11-05 — pre-submission audit against the problem statement
+
+Checked every objective, module, deliverable and evaluation criterion in the official problem statement against the code, added an automated test suite, and re-ran the whole pipeline in a browser on the production build. Five real problems found and fixed; known limits listed at the end.
+
+### Real problems found and fixed
+1. **The on-device AI loaded its engine from a CDN.** Since `@huggingface/transformers` v4, ONNX Runtime's `wasmPaths` default to `https://cdn.jsdelivr.net/npm/onnxruntime-web@…/dist/` unless the app sets them. The worker's `fetch` guard blocked the `.wasm`, but the engine's `.mjs` loader is fetched with `import()`, which that guard can't see. Net effect: the AI fallback was either reaching a CDN for code or failing. Found only because of fix 2 below. `vlmRuntime.ts` now points `wasmPaths` at the copies Vite bundles from `node_modules`, served same-origin. Verified live: the fallback ran on WebGPU and returned a result, and the only host contacted was `localhost`.
+2. **Zero egress is now enforced by the browser, not just by our own code.** The production build carries a Content-Security-Policy (`connect-src 'self'`, `script-src 'self' 'wasm-unsafe-eval' blob:`), also sent as a header by `vite preview` so it covers every worker. A deliberate `fetch('https://example.com/collect')` from the page is refused. Dev server excluded (hot reload needs inline scripts and a WebSocket).
+3. **Correcting a claim didn't re-check the policy.** A misread $50 meal corrected to $500 still showed (and exported) PASS against a $75 limit. `editClaim` now re-runs the Policy Engine when amount, currency or category change, moves a draft to review if it no longer passes, and logs `POLICY_REEVALUATED`. It also refuses to edit an approved claim (the UI already hid the fields; the agent didn't enforce it).
+4. **"Approve & submit" discarded unsaved corrections**, approving the old values. It now saves first, and stops if the save fails. The receipt **date** is now editable too (it was display-only, so a date OCR missed could never be filled in).
+5. **One receipt at a time.** The brief says "a folder of receipts"; the picker took one file and each receipt needed its own Extract click. Now: multi-file upload (each rejected file named, the rest continue) and "Extract all", which runs them one after another through the Orchestrator. After a reload, receipts that already have a claim show "Claim already created" instead of an Extract button that would have built a duplicate claim.
+
+Smaller: OCR missed the currency when the code runs into the price (`INR12.00`), found by the new tests; the PDF.js worker and ONNX loader (`.mjs`) were never in the offline precache; amounts now show two decimals; lint no longer scans the vendored Tesseract files.
+
+### Tests added (`npm test`, 112 tests, ~8s)
+Unit tests for each agent, and integration tests running the agents together on the real Postgres engine (PGlite in memory, the app's real schema): ingestion rejections, duplicate detection, policy re-check after edits, approve-once, `.xlsx` written and read back, audit-chain tamper detection (edit, delete, forged hash, 20 concurrent appends), and the Orchestrator end to end, including retry-then-succeed, give up after 3 attempts with no claim written, and the AI fallback. Only canvas/Tesseract/ONNX are faked there; the browser run below covers them.
+
+### Browser end-to-end (production build, with the CSP)
+Policies, an FX rate and a Boston trip set up through the UI; four files uploaded at once (café, hotel, an exact copy of the café receipt, and a text file named `.png`). The fake was rejected by name; real OCR read the other three at 100% in under 10s: categories correct, both linked to the trip, hotel flagged `LODGING_LIMIT_EXCEEDED`, copy flagged as a duplicate. Edit-then-save and edit-then-approve both behaved as fixed above; audit chain verified (10/10). A PDF phone bill went through PDF.js and OCR (Communication, 95%). An unreadable image went to the on-device AI on WebGPU. Phone width (375px) has no sideways overflow.
+
+### Known limits, stated plainly
+- Category is decided per receipt (from vendor and line-item text), not per line item. The brief's wording is per line item; a mixed receipt (hotel bill with a restaurant charge) gets one category.
+- Only page 1 of a PDF is read.
+- A partial travel match (REVIEW) stores the suggested trip ID, and the Claims list shows it as "linked"; the claim itself is in review.
+- Editing doesn't re-run travel reconciliation.
+- The CSP header covers workers only when served by `vite preview` (or a host configured the same way); the `<meta>` tag covers the page everywhere.

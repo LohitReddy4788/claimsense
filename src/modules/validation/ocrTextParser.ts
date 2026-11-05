@@ -11,9 +11,11 @@ const CORE_PATH = '/tesseract/core/'
 const LANG_PATH = '/tesseract/lang/'
 const LSTM_ONLY = 1 // Tesseract OEM.LSTM_ONLY — faster and more accurate than the legacy engine
 
-const AMOUNT_PATTERN = /(?:total|amount|due)?\s*[:\-]?\s*(?:USD|EUR|GBP|INR|\$|€|£|₹)?\s*(\d+[.,]\d{2})\b/gi
+const AMOUNT_PATTERN = /(?:total|amount|due)?\s*[:-]?\s*(?:USD|EUR|GBP|INR|\$|€|£|₹)?\s*(\d+[.,]\d{2})\b/gi
 const DATE_PATTERN = /\b(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}-\d{1,2}-\d{2,4})\b/
-const CURRENCY_PATTERN = /\b(USD|EUR|GBP|INR)\b|[$€£₹]/
+// The code can run straight into the price ("INR12.00", found by the test
+// suite), so a following digit also ends it.
+const CURRENCY_PATTERN = /\b(USD|EUR|GBP|INR)(?=\b|\d)|[$€£₹]/
 
 // Found via a real (not synthetic single-line) receipt during the final
 // demo pass: a stylized title font the OCR engine failed to read entirely
@@ -69,7 +71,7 @@ function cleanOcrNoise(value: string): string {
     .trim()
 }
 
-function parseReceiptText(text: string): ExtractedReceiptData {
+export function parseReceiptText(text: string): ExtractedReceiptData {
   const lines = text
     .split('\n')
     .map((l) => l.trim())

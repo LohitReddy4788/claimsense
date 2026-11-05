@@ -11,16 +11,23 @@ interface EditBuffer {
   vendor: string
   amount: string
   currency: string
+  date: string
   category: string
 }
 
 function toBuffer(c: ClaimRecord): EditBuffer {
   return {
     vendor: c.vendor ?? '',
-    amount: c.amount === null ? '' : String(c.amount),
+    amount: c.amount === null ? '' : c.amount.toFixed(2),
     currency: c.currency ?? '',
+    date: c.date ?? '',
     category: c.category,
   }
+}
+
+function isDirty(c: ClaimRecord, buf: EditBuffer): boolean {
+  const original = toBuffer(c)
+  return (Object.keys(original) as (keyof EditBuffer)[]).some((k) => original[k].trim() !== buf[k].trim())
 }
 
 interface ClaimsPanelProps {
@@ -75,13 +82,15 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active])
 
-  async function handleSave(claimId: string) {
+  /** Returns whether the edit was saved, so Approve can refuse to go
+   * ahead on a failed save instead of approving the old values. */
+  async function handleSave(claimId: string): Promise<boolean> {
     const buf = edits[claimId]
-    if (!buf) return
+    if (!buf) return false
     const amount = buf.amount.trim() === '' ? null : Number(buf.amount)
     if (buf.amount.trim() !== '' && Number.isNaN(amount)) {
       setMessage((m) => ({ ...m, [claimId]: 'Amount must be a number.' }))
-      return
+      return false
     }
     // editClaim/repo.updateClaim can throw on a genuine storage error (quota,
     // corruption) — without this, that failure was an unhandled rejection
@@ -92,19 +101,27 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
         vendor: buf.vendor.trim() === '' ? null : buf.vendor.trim(),
         amount,
         currency: buf.currency.trim() === '' ? null : buf.currency.trim(),
+        date: buf.date.trim() === '' ? null : buf.date.trim(),
         category: buf.category,
       })
       setMessage((m) => ({ ...m, [claimId]: 'Saved.' }))
       await refresh()
+      return true
     } catch (err) {
       setMessage((m) => ({
         ...m,
         [claimId]: `Could not save: ${err instanceof Error ? err.message : String(err)}`,
       }))
+      return false
     }
   }
 
-  async function handleApprove(claimId: string) {
+  async function handleApprove(claim: ClaimRecord) {
+    const claimId = claim.claimId
+    // Found in the pre-submission audit: approving straight after typing a
+    // correction used to approve the old values and silently drop the edit.
+    const buf = edits[claimId]
+    if (buf && isDirty(claim, buf) && !(await handleSave(claimId))) return
     try {
       const result = await approveClaim(claimId)
       setMessage((m) => ({
@@ -185,7 +202,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                   </p>
                 )}
 
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
                   <label className="text-xs text-white/50">
                     Vendor
                     <input
@@ -220,6 +237,18 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                     />
                   </label>
                   <label className="text-xs text-white/50">
+                    Date
+                    <input
+                      className="mt-0.5 w-full rounded-md border border-white/25 bg-black px-2 py-1 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40 disabled:opacity-40"
+                      value={buf.date}
+                      placeholder="YYYY-MM-DD"
+                      disabled={c.status === 'approved'}
+                      onChange={(e) =>
+                        setEdits((prev) => ({ ...prev, [c.claimId]: { ...buf, date: e.target.value } }))
+                      }
+                    />
+                  </label>
+                  <label className="text-xs text-white/50">
                     Category
                     <select
                       className="mt-0.5 w-full rounded-md border border-white/25 bg-black px-2 py-1 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40 disabled:opacity-40"
@@ -239,12 +268,11 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-white/10 pt-2.5 text-xs text-white/50">
-                  <span>Date: {c.date ?? '—'}</span>
                   <span className="flex items-center gap-1">
                     <Plane className="h-3 w-3" strokeWidth={1.75} />
                     {c.travelRequestId ? `linked (${c.travelRequestId})` : 'not linked'}
                   </span>
-                  <span title="From original extraction, not re-checked after edits">
+                  <span title="Re-checked against the policy whenever amount, currency or category is saved">
                     Policy: {c.policyResult ?? '—'}
                     {c.policyReasonCode && ` (${c.policyReasonCode})`}
                   </span>
@@ -262,7 +290,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleApprove(c.claimId)}
+                      onClick={() => handleApprove(c)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-white bg-white px-3.5 py-1.5 text-xs font-medium text-black transition-colors hover:bg-white/90"
                     >
                       <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
