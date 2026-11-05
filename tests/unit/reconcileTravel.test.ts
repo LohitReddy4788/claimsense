@@ -84,6 +84,17 @@ describe('Travel-Request Reconciler Agent', () => {
     expect(r.status).toBe('UNMATCHED')
   })
 
+  it.each(['12-03-2026', '12.03.2026', '13/03/2026', '12 Mar 2026'])(
+    'matches day-first and written-out dates: %s (audit fix)',
+    (date) => {
+      expect(reconcileTravel(receipt('Boston Harbor Hotel', date), 'EMP001', [trip()]).status).toBe('MATCHED')
+    },
+  )
+
+  it('treats employee IDs typed differently as the same person (audit fix)', () => {
+    expect(reconcileTravel(receipt('Boston Harbor Hotel', '2026-03-12'), ' emp001 ', [trip()]).status).toBe('MATCHED')
+  })
+
   it('handles a receipt with no date', () => {
     const r = reconcileTravel(receipt('Boston Hotel', null), 'EMP001', [trip()])
     // 0.5 date score * 0.6 + destination 0.4 = 0.7 → review, not auto-link

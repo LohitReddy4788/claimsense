@@ -1,16 +1,20 @@
 import type { ExtractedReceiptData } from '../../types/extraction'
 import type { TravelRequestRecord } from '../../types/records'
 import type { ReconciliationResult } from '../../types/reconciliation'
+import { dateReadings } from '../../utils/receiptDate'
 
 const MATCH_THRESHOLD = 0.8
 const REVIEW_THRESHOLD = 0.4
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
 function parseDate(value: string | null): Date | null {
-  if (!value) return null
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? null : parsed
+  const readings = dateReadings(value)
+  return readings.length === 1 ? readings[0] : null
 }
+
+// Employee IDs are typed by hand in two places (the trip and "Claiming
+// as"), so "emp001 " and "EMP001" must be the same person.
+const sameEmployee = (a: string, b: string) => a.trim().toUpperCase() === b.trim().toUpperCase()
 
 /** 1.0 inside the trip's date range, decaying to 0 a week outside it, 0.5
  * with no parseable receipt date at all (neither a confirming nor a
@@ -49,7 +53,7 @@ export function reconcileTravel(
   travelRequests: TravelRequestRecord[],
 ): ReconciliationResult {
   const employeeTrips = travelRequests.filter(
-    (tr) => tr.employeeId === employeeId && tr.approvalStatus === 'approved',
+    (tr) => sameEmployee(tr.employeeId, employeeId) && tr.approvalStatus === 'approved',
   )
   if (employeeTrips.length === 0) {
     return {
@@ -61,7 +65,10 @@ export function reconcileTravel(
   }
 
   const text = receiptText(data)
-  const receiptDate = parseDate(data.date)
+  // An ambiguous date (03/04/2026) is scored on whichever reading fits
+  // the trip better; with no readable date at all, dateScore's neutral
+  // 0.5 applies.
+  const receiptDates = dateReadings(data.date)
 
   const scored: { trip: TravelRequestRecord; score: number }[] = []
   for (const trip of employeeTrips) {
@@ -69,7 +76,8 @@ export function reconcileTravel(
     const end = parseDate(trip.endDate)
     if (!start || !end) continue // malformed stored data — skip, don't crash or guess
 
-    const dScore = dateScore(receiptDate, start, end)
+    const dScore =
+      receiptDates.length === 0 ? dateScore(null, start, end) : Math.max(...receiptDates.map((d) => dateScore(d, start, end)))
     const destScore = destinationScore(text, trip.destination)
     scored.push({ trip, score: dScore * 0.6 + destScore * 0.4 })
   }

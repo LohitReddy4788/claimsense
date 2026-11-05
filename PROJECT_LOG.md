@@ -317,6 +317,17 @@ The gap list was ranked and five were fixed; three were consciously left (below)
 
 New columns are added with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so an existing database upgrades on its next start. This is tested, and was verified on this morning's real browser data. The app now also asks the browser to keep its storage permanently: in the test browser, this morning's receipt files had vanished from OPFS while their database records stayed. The app never deletes receipt files (`deleteReceiptFile` has no callers), so the cause was outside it, most likely best-effort eviction. The browser may decline the request (this one did; installed PWAs are usually granted it). Tests: 124.
 
+### Third pass the same day: edge-case testing
+Every form was driven with bad input in the browser, plus the SQL console with attack queries, receipts in other date formats, and the full pipeline with the server stopped. The forms already held: negative, zero and non-numeric limits and rates were refused, as were a trip ending before it starts and an impossible edited date. Six real gaps were found and fixed:
+1. **The "read-only" SQL console could break the app.** `SELECT set_config('search_path', 'nowhere', false)` passes both the keyword filter and READ ONLY. Committing it changed the one connection every tab shares, after which every app query failed (`relation "claims" does not exist`) until a reload. Reproduced live. Console queries are now always rolled back. A regression test fails without the fix.
+2. **Day-first dates were misread.** `new Date('12-03-2026')` is 3 December in JavaScript, so Indian/European receipts didn't match their trip, and `13/03/2026` didn't parse at all. Written-out dates ("12 Mar 2026", "March 12, 2026") were never read by OCR. New `src/utils/receiptDate.ts` is used by OCR, validation, the reconciler, the integrity checks and the review form. A date is stored as YYYY-MM-DD when only one reading exists; an ambiguous one keeps both readings and is never guessed. Verified with real OCR: `13/03/2026` → 2026-03-13, matched to the trip.
+3. **Two limits for one category: the engine silently used whichever came first.** It now applies the strictest and says so in the result.
+4. **Imported policy names didn't map to categories.** A "Hotel" limit from a policy PDF was saved as category "Hotel", which no receipt ever gets, so it never applied. Names are now mapped ("Hotel" → Lodging, "Airfare" → Travel); unknown names are kept and flagged in the panel.
+5. **Employee IDs were case- and space-sensitive.** "emp001" didn't match a trip filed under "EMP001".
+6. **Extraction ran with an empty "Claiming as"**, creating claims that belonged to nobody. It is now refused with a message. Edited dates are also validated and stored as YYYY-MM-DD.
+
+Offline re-verified with the server stopped (no process on the port; a fetch from the page failed): the app loaded from the service worker and a receipt went through OCR → claim. The precache now includes the `.mjs` files (PDF.js worker, ONNX loader). Tests: 167.
+
 ### Known limits, stated plainly
 - Policy limits are still checked against the receipt total in its main category; line-item categories are recorded and exported but not checked against each category's own limit.
 - No grouping of several receipts into one claim report: each receipt is its own claim line, reviewed and approved on its own, then exported together. Left deliberately; a new workflow the night before submission was judged too risky.

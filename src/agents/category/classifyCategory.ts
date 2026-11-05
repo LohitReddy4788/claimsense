@@ -1,5 +1,5 @@
 import type { ExtractedReceiptData } from '../../types/extraction'
-import type { CategoryResult, ExpenseCategory, LineItemCategory } from '../../types/category'
+import { EXPENSE_CATEGORIES, type CategoryResult, type ExpenseCategory, type LineItemCategory } from '../../types/category'
 
 // Deterministic keyword rules, not the VLM — categorizing "Coffee House"
 // as Meals doesn't need a multi-minute AI call. Keeps this genuinely fast
@@ -14,13 +14,14 @@ const CATEGORY_KEYWORDS: Record<Exclude<ExpenseCategory, 'Other'>, string[]> = {
   Travel: [
     'taxi', 'uber', 'lyft', 'cab', 'flight', 'airline', 'airways', 'airport',
     'train', 'railway', 'metro', 'transit', 'parking', 'toll', 'car rental',
-    'fuel', 'gas station', 'petrol', 'baggage', 'boarding',
+    'fuel', 'gas station', 'petrol', 'baggage', 'boarding', 'airfare', 'transport',
+    'transportation', 'mileage',
   ],
   Meals: [
     'restaurant', 'cafe', 'coffee', 'bistro', 'diner', 'bakery', 'pizza',
     'burger', 'food', 'kitchen', 'grill', 'eatery', 'catering', 'canteen',
     'uber eats', 'doordash', 'grubhub', 'breakfast', 'lunch', 'dinner', 'meal',
-    'latte', 'espresso', 'sandwich', 'room service', 'minibar',
+    'latte', 'espresso', 'sandwich', 'room service', 'minibar', 'per diem', 'dining',
   ],
   Lodging: [
     'hotel', 'inn', 'motel', 'resort', 'lodge', 'suites', 'hostel',
@@ -28,7 +29,7 @@ const CATEGORY_KEYWORDS: Record<Exclude<ExpenseCategory, 'Other'>, string[]> = {
   ],
   Communication: [
     'phone', 'mobile', 'telecom', 'internet', 'wifi', 'broadband',
-    'wireless', 'cellular', 'data plan',
+    'wireless', 'cellular', 'data plan', 'telephone', 'telecommunication',
   ],
 }
 
@@ -133,4 +134,14 @@ export function classifyLineItems(data: ExtractedReceiptData, receiptCategory: E
       ? { description: item.description, amount: item.amount, category: receiptCategory, inherited: true }
       : { description: item.description, amount: item.amount, category: own.category, inherited: false }
   })
+}
+
+/** The app's category for a name a policy document uses ("Hotel" →
+ * Lodging, "Airfare" → Travel), so an imported limit applies to the
+ * receipts it was meant for. Null when the name maps to no category. */
+export function toExpenseCategory(name: string): ExpenseCategory | null {
+  const exact = EXPENSE_CATEGORIES.find((c) => c.toLowerCase() === name.trim().toLowerCase())
+  if (exact) return exact
+  const guess = classifyText(name.toLowerCase())
+  return guess.category === 'Other' ? null : guess.category
 }

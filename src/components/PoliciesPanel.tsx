@@ -307,7 +307,16 @@ export function PoliciesPanel() {
               >
                 <span className="flex items-center gap-2 text-white">
                   <Cpu className="h-3.5 w-3.5 flex-none text-white/60" strokeWidth={1.75} />
-                  <span className="font-medium">{s.category}</span> — {s.limitAmount} {settings.baseCurrency}
+                  <span className="font-medium">{s.category}</span>
+                  {s.writtenAs && s.writtenAs.toLowerCase() !== s.category.toLowerCase() && (
+                    <span className="text-white/50"> (written as "{s.writtenAs}")</span>
+                  )}{' '}
+                  — {s.limitAmount} {settings.baseCurrency}
+                  {!EXPENSE_CATEGORIES.some((c) => c.toLowerCase() === s.category.toLowerCase()) && (
+                    <span className="block text-xs text-white/60">
+                      Not one of the app's categories, so it won't apply to any receipt.
+                    </span>
+                  )}
                 </span>
                 <span className="flex flex-none gap-1.5">
                   <button

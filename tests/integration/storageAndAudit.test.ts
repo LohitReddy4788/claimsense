@@ -106,6 +106,27 @@ describe('Audit trail (SHA-256 hash chain)', () => {
 })
 
 describe('Read-only SQL console guard', () => {
+  async function actualConsole() {
+    const { runReadOnlyQueryOn } = await vi.importActual<typeof import('../../src/modules/storage/pg')>(
+      '../../src/modules/storage/pg',
+    )
+    const pg = await currentDb()
+    return (sql: string) => runReadOnlyQueryOn(pg, sql)
+  }
+
+  it('cannot change the shared connection’s settings (audit fix)', async () => {
+    const runReadOnlyQuery = await actualConsole()
+    await runReadOnlyQuery("SELECT set_config('search_path', 'nowhere', false)")
+    // The app's own queries still find their tables afterwards.
+    await expect(repo.listClaims()).resolves.toEqual([])
+    expect((await runReadOnlyQuery('SELECT count(*)::int AS n FROM claims')).rows).toEqual([{ n: 0 }])
+  })
+
+  it('lets the database itself refuse a write the keyword filter misses', async () => {
+    const runReadOnlyQuery = await actualConsole()
+    await expect(runReadOnlyQuery('SELECT lo_create(0)')).rejects.toThrow(/read-only/)
+  })
+
   it('refuses writes before they reach the database', async () => {
     const { runReadOnlyQuery } = await vi.importActual<typeof import('../../src/modules/storage/pg')>(
       '../../src/modules/storage/pg',

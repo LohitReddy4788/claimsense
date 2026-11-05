@@ -1,6 +1,7 @@
 import { createWorker } from 'tesseract.js'
 import { computeFieldConfidence } from './receiptSchema'
 import { normalizeCurrency } from '../../utils/currency'
+import { RECEIPT_DATE_PATTERN } from '../../utils/receiptDate'
 import { parsePrintedBreakdown, largestNonTenderAmount } from './receiptBreakdown'
 import type { ExtractionResult, ExtractedReceiptData } from '../../types/extraction'
 
@@ -12,7 +13,6 @@ const LANG_PATH = '/tesseract/lang/'
 const LSTM_ONLY = 1 // Tesseract OEM.LSTM_ONLY — faster and more accurate than the legacy engine
 
 const AMOUNT_PATTERN = /(?:total|amount|due)?\s*[:-]?\s*(?:USD|EUR|GBP|INR|\$|€|£|₹)?\s*(\d+[.,]\d{2})\b/gi
-const DATE_PATTERN = /\b(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}-\d{1,2}-\d{2,4})\b/
 // The code can run straight into the price ("INR12.00", found by the test
 // suite), so a following digit also ends it.
 const CURRENCY_PATTERN = /\b(USD|EUR|GBP|INR)(?=\b|\d)|[$€£₹]/
@@ -110,8 +110,8 @@ export function parseReceiptText(text: string): ExtractedReceiptData {
   const amount =
     breakdown.total ?? largestNonTenderAmount(lines) ?? (amounts.length > 0 ? Math.max(...amounts) : null)
 
-  const dateMatch = text.match(DATE_PATTERN)
-  const date = dateMatch && isPlausibleDate(dateMatch[1]) ? dateMatch[1] : null
+  const dateMatch = text.match(RECEIPT_DATE_PATTERN)
+  const date = dateMatch && isPlausibleDate(dateMatch[0]) ? dateMatch[0] : null
 
   const currencyMatch = text.match(CURRENCY_PATTERN)
   const currency = normalizeCurrency(currencyMatch ? currencyMatch[0] : null)

@@ -22,6 +22,11 @@ describe('Validation gate: OCR first, on-device VLM as fallback', () => {
     expect(runVlm).not.toHaveBeenCalled()
   })
 
+  it('stores an unambiguous printed date as YYYY-MM-DD (audit fix)', async () => {
+    runOcrFallback.mockResolvedValue(ok({ ...full, date: '13/03/2026' }))
+    expect((await validateExtraction(blob, vi.fn())).data?.date).toBe('2026-03-13')
+  })
+
   it('falls back to the VLM when OCR is incomplete', async () => {
     runOcrFallback.mockResolvedValue(ok({ ...full, date: null }, 2 / 3))
     const r = await validateExtraction(blob, async () => ok())

@@ -4,6 +4,7 @@ import * as repo from '../modules/storage/repository'
 import { editClaim, approveClaim } from '../agents/review/reviewClaim'
 import { exportApprovedClaims } from '../agents/export/exportClaims'
 import { EXPENSE_CATEGORIES } from '../types/category'
+import { dateReadings, normalizeReceiptDate } from '../utils/receiptDate'
 import { LoadingState, errorText } from './LoadingState'
 import type { ClaimRecord, ReceiptRecord } from '../types/records'
 
@@ -92,6 +93,12 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
       setMessage((m) => ({ ...m, [claimId]: 'Amount must be a number.' }))
       return false
     }
+    // A typed date has to be one the checks can read, or trip matching and
+    // the future-date check would silently skip it.
+    if (buf.date.trim() !== '' && dateReadings(buf.date).length === 0) {
+      setMessage((m) => ({ ...m, [claimId]: 'Date must be a real date, e.g. 2026-03-12 or 12/03/2026.' }))
+      return false
+    }
     // editClaim/repo.updateClaim can throw on a genuine storage error (quota,
     // corruption) — without this, that failure was an unhandled rejection
     // with nothing shown on screen, the same silent-failure class refresh()
@@ -101,7 +108,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
         vendor: buf.vendor.trim() === '' ? null : buf.vendor.trim(),
         amount,
         currency: buf.currency.trim() === '' ? null : buf.currency.trim(),
-        date: buf.date.trim() === '' ? null : buf.date.trim(),
+        date: buf.date.trim() === '' ? null : normalizeReceiptDate(buf.date),
         category: buf.category,
       })
       setMessage((m) => ({ ...m, [claimId]: 'Saved.' }))

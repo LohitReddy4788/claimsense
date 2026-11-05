@@ -1,3 +1,4 @@
+import { toExpenseCategory } from '../category/classifyCategory'
 import { detectFileKind } from '../../modules/validation/fileSignature'
 import { renderPdfPages } from '../../modules/document-processing/processDocument'
 import { extractPolicyPage } from '../extraction/extractReceipt'
@@ -64,9 +65,16 @@ export async function extractPolicyFromPdf(
   // if the same category is mentioned on more than one page, a later
   // page is more likely to be the specific rules section rather than an
   // earlier summary/overview mention.
+  // Names are mapped to the app's own categories first (found in the
+  // pre-submission audit: a "Hotel" limit was saved as category "Hotel",
+  // which no receipt is ever classified as, so it never applied). A name
+  // that maps to nothing is kept as written, and the panel says it won't
+  // match any receipt.
   const byCategory = new Map<string, PolicyRuleCandidate>()
   for (const candidate of allCandidates) {
-    byCategory.set(candidate.category.toLowerCase(), candidate)
+    const mapped = toExpenseCategory(candidate.category)
+    const normalized = mapped ? { ...candidate, category: mapped, writtenAs: candidate.category } : candidate
+    byCategory.set(normalized.category.toLowerCase(), normalized)
   }
 
   return {

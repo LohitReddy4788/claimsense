@@ -32,6 +32,16 @@ describe('OCR text parser (OCR + Information Extraction Agent, fast path)', () =
     expect(d.vendor).toBeNull()
   })
 
+  it.each([
+    ['Date: 12 Mar 2026', '12 Mar 2026'],
+    ['Mar 12, 2026 7:41 PM', 'Mar 12, 2026'],
+    ['13/03/2026', '13/03/2026'],
+  ])('reads the date in %s (audit fix)', (line, date) => {
+    expect(parseReceiptText(`Shop
+${line}
+Total 5.00`).date).toBe(date)
+  })
+
   it('treats an implausible year (OCR misread) as no date', () => {
     expect(parseReceiptText('Shop\n3036-03-12\nTotal 5.00').date).toBeNull()
   })

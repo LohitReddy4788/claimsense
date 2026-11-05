@@ -315,14 +315,28 @@ export async function runReadOnlyQuery(sql: string): Promise<SqlResult> {
   if (!/^(select|with|explain|show)\b/i.test(text) || MUTATING.test(text)) {
     throw new Error('Only read-only queries (SELECT, WITH, EXPLAIN, SHOW) are allowed here.')
   }
-  const pg = await getPg()
+  return runReadOnlyQueryOn(await getPg(), text)
+}
+
+/** The console's query step on a given connection — split out so tests
+ * can run it against an in-memory database. */
+export async function runReadOnlyQueryOn(pg: Pick<PGliteWorker, 'transaction'>, text: string): Promise<SqlResult> {
   const started = performance.now()
   // The keyword filter above is a fast, friendly first check; the real
   // guarantee is Postgres itself refusing any write inside a READ ONLY
   // transaction (e.g. a data-modifying function the regex didn't spot).
+  // Always rolled back, never committed. Found in the pre-submission
+  // audit: READ ONLY still allows SELECT set_config('search_path', …,
+  // false), and committing kept that setting on the one connection every
+  // tab shares, after which every app query failed ("relation claims does
+  // not exist") until a reload. A rollback undoes any such setting too.
   const result = await pg.transaction(async (tx) => {
     await tx.exec('SET TRANSACTION READ ONLY')
-    return tx.query<Row>(text)
+    try {
+      return await tx.query<Row>(text)
+    } finally {
+      await tx.rollback()
+    }
   })
   return {
     fields: result.fields.map((f) => f.name),

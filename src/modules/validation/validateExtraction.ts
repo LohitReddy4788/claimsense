@@ -1,6 +1,7 @@
 import { extractedReceiptSchema } from './receiptSchema'
 import { runOcrFallback } from './ocrTextParser'
 import type { ExtractionResult, ExtractedReceiptData } from '../../types/extraction'
+import { normalizeReceiptDate } from '../../utils/receiptDate'
 
 // All 3 required fields (vendor, amount, date) must be present — matches
 // the plan's own wording ("if confidence is too low OR extraction is
@@ -20,6 +21,13 @@ export interface ValidatedReceipt {
    * order: a receipt OCR already reads with full confidence never pays the
    * multi-minute VLM cost at all. */
   vlmResult: ExtractionResult | null
+}
+
+// Both paths return the date as printed; storing it as YYYY-MM-DD when
+// only one reading is possible keeps the claim, the export and every later
+// check agreeing on what it means (see receiptDate.ts).
+function withIsoDate(data: ExtractedReceiptData): ExtractedReceiptData {
+  return { ...data, date: normalizeReceiptDate(data.date) }
 }
 
 // Takes the already-narrowed success:true variant so the schema/confidence
@@ -53,15 +61,16 @@ export async function validateExtraction(
 ): Promise<ValidatedReceipt> {
   const ocrResult = await runOcrFallback(imageBlob)
   if (ocrResult.success && isCompleteAndValid(ocrResult)) {
-    return { status: 'valid', data: ocrResult.data, source: 'ocr', ocrResult, vlmResult: null }
+    return { status: 'valid', data: withIsoDate(ocrResult.data), source: 'ocr', ocrResult, vlmResult: null }
   }
 
   const vlmResult = await runVlm()
   if (vlmResult.success && isCompleteAndValid(vlmResult)) {
-    return { status: 'valid', data: vlmResult.data, source: 'vlm', ocrResult, vlmResult }
+    return { status: 'valid', data: withIsoDate(vlmResult.data), source: 'vlm', ocrResult, vlmResult }
   }
 
-  const bestData = ocrResult.success ? ocrResult.data : vlmResult.success ? vlmResult.data : null
+  const rawBest = ocrResult.success ? ocrResult.data : vlmResult.success ? vlmResult.data : null
+  const bestData = rawBest && withIsoDate(rawBest)
   const source: ExtractionSource = ocrResult.success ? 'ocr' : vlmResult.success ? 'vlm' : 'none'
   return { status: 'needs_review', data: bestData, source, ocrResult, vlmResult }
 }

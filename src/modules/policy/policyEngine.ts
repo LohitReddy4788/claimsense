@@ -92,7 +92,18 @@ export function evaluatePolicy(
     }
   }
 
-  const policy = policies.find((p) => p.category.toLowerCase() === category.toLowerCase())
+  // Conflict resolution (found in the pre-submission audit): nothing stops
+  // two limits being entered for one category, and the engine used to take
+  // whichever came first. With conflicting rules the strictest one applies,
+  // and the result says so, so a reviewer can tidy up the policy list.
+  // A broken limit among them still goes to REVIEW below, never skipped.
+  const matching = policies.filter((p) => p.category.toLowerCase() === category.toLowerCase())
+  const broken = matching.find((p) => !Number.isFinite(p.limitAmount) || p.limitAmount <= 0)
+  const policy = broken ?? [...matching].sort((a, b) => a.limitAmount - b.limitAmount)[0]
+  const conflictNote =
+    !broken && matching.length > 1 && new Set(matching.map((p) => p.limitAmount)).size > 1
+      ? ` (${matching.length} limits are set for ${category}; the strictest applies.)`
+      : ''
   if (!policy) {
     return {
       status: 'REVIEW',
@@ -127,7 +138,7 @@ export function evaluatePolicy(
     return {
       status: 'VIOLATION',
       reasonCode: code,
-      message: `${conversion.converted.toFixed(2)} ${settings.baseCurrency} exceeds the ${policy.limitAmount} ${settings.baseCurrency} limit for ${category}.`,
+      message: `${conversion.converted.toFixed(2)} ${settings.baseCurrency} exceeds the ${policy.limitAmount} ${settings.baseCurrency} limit for ${category}.${conflictNote}`,
       convertedAmount: conversion.converted,
       baseCurrency: settings.baseCurrency,
     }
@@ -136,7 +147,7 @@ export function evaluatePolicy(
   return {
     status: 'PASS',
     reasonCode: null,
-    message: `${conversion.converted.toFixed(2)} ${settings.baseCurrency} is within the ${policy.limitAmount} ${settings.baseCurrency} limit for ${category}.`,
+    message: `${conversion.converted.toFixed(2)} ${settings.baseCurrency} is within the ${policy.limitAmount} ${settings.baseCurrency} limit for ${category}.${conflictNote}`,
     convertedAmount: conversion.converted,
     baseCurrency: settings.baseCurrency,
   }

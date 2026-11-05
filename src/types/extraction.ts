@@ -57,6 +57,9 @@ export type ExtractionResult =
 export interface PolicyRuleCandidate {
   category: string
   limitAmount: number
+  /** The document's own name for the category, when it was mapped to one
+   * of the app's (e.g. "Hotel" for Lodging). */
+  writtenAs?: string
 }
 
 export type PolicyExtractionResult =

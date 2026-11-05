@@ -65,6 +65,24 @@ describe('Policy Engine', () => {
     expect(r.reasonCode).toBe('POLICY_LIMIT_INVALID')
   })
 
+  it('applies the strictest of conflicting limits and says so (audit fix)', () => {
+    const two = [...policies, { policyId: 'p3', category: 'meals', limitAmount: 40 }]
+    const r = evaluatePolicy(data(50), 'Meals', two, settings)
+    expect(r.status).toBe('VIOLATION')
+    expect(r.message).toMatch(/2 limits are set for Meals; the strictest applies/)
+    expect(evaluatePolicy(data(30), 'Meals', two, settings).status).toBe('PASS')
+  })
+
+  it('does not mention a conflict when duplicate rules agree', () => {
+    const same = [...policies, { policyId: 'p3', category: 'Meals', limitAmount: 75 }]
+    expect(evaluatePolicy(data(50), 'Meals', same, settings).message).not.toMatch(/strictest/)
+  })
+
+  it('still refuses to pass when one of several rules is broken', () => {
+    const r = evaluatePolicy(data(10), 'Meals', [...policies, { policyId: 'x', category: 'Meals', limitAmount: Number.NaN }], settings)
+    expect(r.reasonCode).toBe('POLICY_LIMIT_INVALID')
+  })
+
   it.each([Number.NaN, 0, -1])('treats a broken conversion rate (%s) as unsupported', (rate) => {
     const r = evaluatePolicy(data(10, 'EUR'), 'Meals', policies, { ...settings, rates: { EUR: rate } })
     expect(r.reasonCode).toBe('CURRENCY_UNSUPPORTED')

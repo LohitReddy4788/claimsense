@@ -160,10 +160,17 @@ export function UploadReceiptsPanel() {
   // results. onPhaseChange just updates the same small set of UI states
   // this panel already had before the Orchestrator existed.
   async function runExtraction(receiptId: string, fileHash: string, kind: DetectedFileKind) {
+    // Found in the pre-submission audit: an empty "Claiming as" built
+    // claims that belonged to nobody.
+    const claimant = employeeId.trim()
+    if (!claimant) {
+      setError('Enter who these receipts are for ("Claiming as") before extracting.')
+      return
+    }
     const file = files[receiptId]
     setExtractions((prev) => ({ ...prev, [receiptId]: { status: 'processing' } }))
     const result = await runOrchestrator(
-      { receiptId, fileHash, file, kind, employeeId },
+      { receiptId, fileHash, file, kind, employeeId: claimant },
       (phase) => setExtractions((prev) => ({ ...prev, [receiptId]: { ...prev[receiptId], status: phase } })),
     )
     if (result.success) {
@@ -216,6 +223,10 @@ export function UploadReceiptsPanel() {
   /** One after another, not in parallel: OCR and the on-device model each
    * use one worker, so parallel runs only contend (see extractReceipt.ts). */
   async function extractAll() {
+    if (!employeeId.trim()) {
+      setError('Enter who these receipts are for ("Claiming as") before extracting.')
+      return
+    }
     setExtractingAll(true)
     for (const r of pending) {
       await runExtraction(r.receiptId, r.fileHash, r.fileType as DetectedFileKind)

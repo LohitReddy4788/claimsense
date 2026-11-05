@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyCategory, classifyLineItems } from '../../src/agents/category/classifyCategory'
+import { classifyCategory, classifyLineItems, toExpenseCategory } from '../../src/agents/category/classifyCategory'
 import type { ExtractedReceiptData } from '../../src/types/extraction'
 
 const receipt = (vendor: string | null, items: string[] = []): ExtractedReceiptData => ({
@@ -97,5 +97,20 @@ describe('Category Classifier Agent: each line item', () => {
 
   it('returns nothing for a receipt with no line items', () => {
     expect(classifyLineItems(receipt('Cafe'), 'Meals')).toEqual([])
+  })
+})
+
+describe('Policy document category names (audit fix)', () => {
+  it.each([
+    ['Hotel', 'Lodging'],
+    ['Accommodation', 'Lodging'],
+    ['Airfare', 'Travel'],
+    ['Taxi and transport', 'Travel'],
+    ['Telephone', 'Communication'],
+    ['meals', 'Meals'],
+    ['Per diem', 'Meals'],
+    ['Training', null],
+  ])('maps %s to %s', (name, expected) => {
+    expect(toExpenseCategory(name)).toBe(expected)
   })
 })
