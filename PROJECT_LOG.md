@@ -307,9 +307,20 @@ Unit tests for each agent, and integration tests running the agents together on 
 ### Browser end-to-end (production build, with the CSP)
 Policies, an FX rate and a Boston trip set up through the UI; four files uploaded at once (café, hotel, an exact copy of the café receipt, and a text file named `.png`). The fake was rejected by name; real OCR read the other three at 100% in under 10s: categories correct, both linked to the trip, hotel flagged `LODGING_LIMIT_EXCEEDED`, copy flagged as a duplicate. Edit-then-save and edit-then-approve both behaved as fixed above; audit chain verified (10/10). A PDF phone bill went through PDF.js and OCR (Communication, 95%). An unreadable image went to the on-device AI on WebGPU. Phone width (375px) has no sideways overflow.
 
+### Second pass the same day: closing the remaining gaps
+The gap list was ranked and five were fixed; three were consciously left (below).
+1. **Claims now record the employee.** "Claiming as" was used for the trip match and then dropped, so neither the claim nor the export said whose claim it was. New `employee_id` column, shown on the claim and exported.
+2. **Each line item gets its own category**, as the brief asks (`classifyLineItems`). A line whose text names no category takes the receipt's, marked as inherited. Stored as `line_items` (JSONB), shown on the claim and exported as a second "Line Items" sheet. **Real bug found doing this:** keywords matched anywhere inside a word, so "Dinner" was Lodging ("inn"), "Cabernet Sauvignon" Travel ("cab") and "Automobile Club" Communication ("mobile"). Matching is now whole-word (plurals allowed).
+3. **Up to 3 PDF pages are read**, stacked into one image; the upload card says when more pages exist. Verified with a 2-page hotel folio whose total is only on page 2: read at 100%.
+4. **A partial trip match is shown as "suggested trip, check it"**, not "linked" (new `travel_match` column, also exported).
+5. **Receipts move to "processed"** once their claim exists.
+
+New columns are added with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so an existing database upgrades on its next start. This is tested, and was verified on this morning's real browser data. The app now also asks the browser to keep its storage permanently: in the test browser, this morning's receipt files had vanished from OPFS while their database records stayed. The app never deletes receipt files (`deleteReceiptFile` has no callers), so the cause was outside it, most likely best-effort eviction. The browser may decline the request (this one did; installed PWAs are usually granted it). Tests: 124.
+
 ### Known limits, stated plainly
-- Category is decided per receipt (from vendor and line-item text), not per line item. The brief's wording is per line item; a mixed receipt (hotel bill with a restaurant charge) gets one category.
-- Only page 1 of a PDF is read.
-- A partial travel match (REVIEW) stores the suggested trip ID, and the Claims list shows it as "linked"; the claim itself is in review.
+- Policy limits are still checked against the receipt total in its main category; line-item categories are recorded and exported but not checked against each category's own limit.
+- No grouping of several receipts into one claim report: each receipt is its own claim line, reviewed and approved on its own, then exported together. Left deliberately; a new workflow the night before submission was judged too risky.
 - Editing doesn't re-run travel reconciliation.
+- PDFs longer than 3 pages: only the first 3 are read (shown on the upload card).
 - The CSP header covers workers only when served by `vite preview` (or a host configured the same way); the `<meta>` tag covers the page everywhere.
+- Claims created before 2026-11-05 have no employee or match status recorded.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download, Loader2, Save, ShieldCheck, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane } from 'lucide-react'
+import { Download, Loader2, Save, ShieldCheck, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { editClaim, approveClaim } from '../agents/review/reviewClaim'
 import { exportApprovedClaims } from '../agents/export/exportClaims'
@@ -270,13 +270,45 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-white/10 pt-2.5 text-xs text-white/50">
                   <span className="flex items-center gap-1">
                     <Plane className="h-3 w-3" strokeWidth={1.75} />
-                    {c.travelRequestId ? `linked (${c.travelRequestId})` : 'not linked'}
+                    {!c.travelRequestId
+                      ? 'not linked'
+                      : c.travelMatch === 'REVIEW'
+                        ? `suggested trip, check it (${c.travelRequestId})`
+                        : `linked (${c.travelRequestId})`}
                   </span>
+                  {c.employeeId && (
+                    <span className="flex items-center gap-1">
+                      <User className="h-3 w-3" strokeWidth={1.75} />
+                      {c.employeeId}
+                    </span>
+                  )}
                   <span title="Re-checked against the policy whenever amount, currency or category is saved">
                     Policy: {c.policyResult ?? '—'}
                     {c.policyReasonCode && ` (${c.policyReasonCode})`}
                   </span>
                 </div>
+
+                {c.lineItems.length > 0 && (
+                  <table className="mt-3 w-full text-xs text-white/60">
+                    <tbody>
+                      {c.lineItems.map((item, i) => (
+                        <tr key={i} className="border-t border-white/5">
+                          <td className="py-1 pr-2 text-white/80">{item.description}</td>
+                          <td className="py-1 pr-2 text-right tabular-nums">
+                            {item.amount === null ? '—' : item.amount.toFixed(2)}
+                          </td>
+                          <td
+                            className="py-1 text-right"
+                            title={item.inherited ? "No category in this line's text; uses the receipt's" : undefined}
+                          >
+                            {item.category}
+                            {item.inherited && <span className="text-white/30">*</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
 
                 {c.status !== 'approved' && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">

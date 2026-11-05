@@ -66,7 +66,10 @@ describe('Orchestrator Agent — full pipeline', () => {
     expect(category?.category).toBe('Lodging')
     expect(reconciliation).toMatchObject({ status: 'MATCHED', travelRequestId: 'TR-42' })
     expect(policy).toMatchObject({ status: 'VIOLATION', reasonCode: 'LODGING_LIMIT_EXCEEDED' })
-    expect(claim).toMatchObject({ status: 'review', travelRequestId: 'TR-42', category: 'Lodging' })
+    expect(claim).toMatchObject({
+      status: 'review', travelRequestId: 'TR-42', travelMatch: 'MATCHED', category: 'Lodging', employeeId: 'EMP001',
+      lineItems: [{ description: 'Room', amount: 280, category: 'Lodging', inherited: false }],
+    })
     expect(extractReceipt).not.toHaveBeenCalled() // OCR was enough
     expect(await repo.listClaims()).toHaveLength(1)
     expect((await verifyAuditChain()).valid).toBe(true)

@@ -36,6 +36,22 @@ describe('Repository on real PostgreSQL (PGlite)', () => {
     ).rejects.toThrow()
   })
 
+  it('upgrades a database created before the new claim columns existed', async () => {
+    const pg = await currentDb()
+    await repo.addReceipt({
+      receiptId: 'rec_old', fileName: 'old.png', fileType: 'png', fileSize: 1, opfsPath: 'receipts/rec_old',
+      fileHash: 'h', status: 'processed', uploadedAt: '2026-03-01T00:00:00.000Z',
+    })
+    await pg.exec('ALTER TABLE claims DROP COLUMN employee_id, DROP COLUMN travel_match, DROP COLUMN line_items')
+    await pg.query(
+      `INSERT INTO claims (claim_id, receipt_id, file_hash, category, status, created_at)
+       VALUES ('claim_old', 'rec_old', 'h', 'Meals', 'draft', now())`,
+    )
+    const { SCHEMA } = await vi.importActual<typeof import('../../src/modules/storage/pg')>('../../src/modules/storage/pg')
+    await pg.exec(SCHEMA) // what every app start runs
+    expect(await repo.getClaim('claim_old')).toMatchObject({ employeeId: null, travelMatch: null, lineItems: [] })
+  })
+
   it('keeps timestamps byte-identical, so audit hashes still verify after a reload', async () => {
     const written = await appendAuditEntry('rec_1', 'RECEIPT_INGESTED', 'a.png')
     const [read] = await repo.listAuditLogs()

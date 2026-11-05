@@ -14,6 +14,7 @@ export type WorkbookBuildResult =
 function claimToRow(claim: ClaimRecord, receiptFileName: string) {
   return {
     'Claim ID': claim.claimId,
+    Employee: claim.employeeId ?? '',
     Receipt: receiptFileName,
     Vendor: claim.vendor ?? '',
     Amount: claim.amount ?? '',
@@ -21,6 +22,7 @@ function claimToRow(claim: ClaimRecord, receiptFileName: string) {
     Date: claim.date ?? '',
     Category: claim.category,
     'Travel Request': claim.travelRequestId ?? '',
+    'Travel Match': claim.travelMatch ?? '',
     'Policy Result': claim.policyResult ?? '',
     'Policy Reason': claim.policyReasonCode ?? '',
     'Duplicate Of': claim.duplicateOfClaimId ?? '',
@@ -55,6 +57,21 @@ export async function buildApprovedClaimsWorkbook(): Promise<WorkbookBuildResult
   const worksheet = XLSX.utils.json_to_sheet(rows)
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Approved Claims')
+
+  // One row per line item with its own category, so a hotel bill's
+  // restaurant charge is visible as Meals rather than hidden in Lodging.
+  const lineRows = approved.flatMap((c) =>
+    c.lineItems.map((item) => ({
+      'Claim ID': c.claimId,
+      Description: item.description,
+      Amount: item.amount ?? '',
+      Category: item.category,
+      'Category Source': item.inherited ? 'receipt' : 'line text',
+    })),
+  )
+  if (lineRows.length > 0) {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(lineRows), 'Line Items')
+  }
 
   return { success: true, workbook, claimCount: approved.length }
 }

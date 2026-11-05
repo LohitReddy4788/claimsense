@@ -6,3 +6,12 @@ export interface CategoryResult {
   confidence: number
   reason: string
 }
+
+export interface LineItemCategory {
+  description: string
+  amount: number | null
+  category: ExpenseCategory
+  /** True when the line's own text named no category and it took the
+   * receipt's category instead. */
+  inherited: boolean
+}

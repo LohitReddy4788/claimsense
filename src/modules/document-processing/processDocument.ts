@@ -38,30 +38,58 @@ async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   })
 }
 
+// Found in the pre-submission audit: only page 1 was ever read, so a
+// multi-page invoice whose total sits on page 2 lost it. Up to this many
+// pages are rendered and stacked top to bottom into the one image the
+// extraction stage reads; more than that is unusual for a receipt and
+// would make OCR (and certainly the on-device model) far slower.
+export const MAX_RECEIPT_PAGES = 3
+
 async function processPdf(file: File): Promise<ProcessResult> {
   try {
     const data = await file.arrayBuffer()
     const doc = await pdfjsLib.getDocument({ data }).promise
-    const page = await doc.getPage(1)
-    const baseViewport = page.getViewport({ scale: 1 })
-    const { scale, width, height } = scaleToFit(baseViewport.width, baseViewport.height)
-    const viewport = page.getViewport({ scale })
+    const pageCanvases: HTMLCanvasElement[] = []
 
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const context = canvas.getContext('2d')
-    if (!context) return { success: false, reason: 'Canvas 2D context unavailable.' }
+    for (let pageNum = 1; pageNum <= Math.min(doc.numPages, MAX_RECEIPT_PAGES); pageNum++) {
+      const page = await doc.getPage(pageNum)
+      const baseViewport = page.getViewport({ scale: 1 })
+      const { scale, width, height } = scaleToFit(baseViewport.width, baseViewport.height)
+      const viewport = page.getViewport({ scale })
 
-    // intent: 'print' skips pdf.js's requestAnimationFrame-driven render
-    // scheduling (meant for interactive on-screen viewers) in favor of a
-    // microtask loop. Without it, rendering silently stalls forever if the
-    // browser tab is backgrounded mid-upload — found during Phase 4 testing.
-    await withTimeout(
-      page.render({ canvas, canvasContext: context, viewport, intent: 'print' }).promise,
-      RENDER_TIMEOUT_MS,
-    )
-    const blob = await canvasToBlob(canvas)
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d')
+      if (!context) return { success: false, reason: 'Canvas 2D context unavailable.' }
+
+      // intent: 'print' skips pdf.js's requestAnimationFrame-driven render
+      // scheduling (meant for interactive on-screen viewers) in favor of a
+      // microtask loop. Without it, rendering silently stalls forever if the
+      // browser tab is backgrounded mid-upload — found during Phase 4 testing.
+      await withTimeout(
+        page.render({ canvas, canvasContext: context, viewport, intent: 'print' }).promise,
+        RENDER_TIMEOUT_MS,
+      )
+      pageCanvases.push(canvas)
+    }
+
+    const width = Math.max(...pageCanvases.map((c) => c.width))
+    const height = pageCanvases.reduce((sum, c) => sum + c.height, 0)
+    const stacked = document.createElement('canvas')
+    stacked.width = width
+    stacked.height = height
+    const stackedContext = stacked.getContext('2d')
+    if (!stackedContext) return { success: false, reason: 'Canvas 2D context unavailable.' }
+    stackedContext.fillStyle = '#ffffff'
+    stackedContext.fillRect(0, 0, width, height)
+    let y = 0
+    for (const c of pageCanvases) {
+      stackedContext.drawImage(c, 0, y)
+      y += c.height
+    }
+
+    const blob = await canvasToBlob(stacked)
     return { success: true, blob, width, height, pageCount: doc.numPages }
   } catch (e) {
     return {

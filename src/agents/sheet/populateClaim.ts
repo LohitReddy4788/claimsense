@@ -4,12 +4,14 @@ import { generateId } from '../../utils/id'
 import { checkReceiptIntegrity } from '../../modules/validation/receiptIntegrity'
 import type { ExtractedReceiptData } from '../../types/extraction'
 import type { ExpenseCategory } from '../../types/category'
+import { classifyLineItems } from '../category/classifyCategory'
 import type { ReconciliationResult } from '../../types/reconciliation'
 import type { PolicyCheckResult } from '../../types/policy'
 import type { ClaimRecord } from '../../types/records'
 
 export interface PopulateClaimInput {
   receiptId: string
+  employeeId: string
   fileHash: string
   data: ExtractedReceiptData
   /** From ValidatedReceipt.status — 'needs_review' means Phase 6 couldn't
@@ -90,6 +92,7 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
   const claim: ClaimRecord = {
     claimId: generateId('claim'),
     receiptId: input.receiptId,
+    employeeId: input.employeeId,
     fileHash: input.fileHash,
     vendor: input.data.vendor,
     amount: input.data.amount,
@@ -97,6 +100,8 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
     date: input.data.date,
     category: input.category,
     travelRequestId: input.reconciliation.travelRequestId,
+    travelMatch: input.reconciliation.status,
+    lineItems: classifyLineItems(input.data, input.category),
     policyResult: input.policy.status,
     policyReasonCode: input.policy.reasonCode,
     duplicateOfClaimId,
@@ -107,10 +112,11 @@ export async function populateClaim(input: PopulateClaimInput): Promise<ClaimRec
   }
 
   await repo.addClaim(claim)
+  await repo.updateReceiptStatus(input.receiptId, 'processed')
   await appendAuditEntry(
     claim.claimId,
     'CLAIM_CREATED',
-    `vendor: ${claim.vendor ?? '—'}, amount: ${claim.amount ?? '—'} ${claim.currency ?? ''}, status: ${claim.status}` +
+    `employee: ${claim.employeeId}, vendor: ${claim.vendor ?? '—'}, amount: ${claim.amount ?? '—'} ${claim.currency ?? ''}, status: ${claim.status}` +
       (duplicateOfClaimId ? `, possible duplicate of ${duplicateOfClaimId}` : '') +
       (integrityCheck.reason ? `, ${integrityCheck.reason}` : ''),
   )

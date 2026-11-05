@@ -1,5 +1,5 @@
 import type { ExtractedReceiptData } from '../../types/extraction'
-import type { CategoryResult, ExpenseCategory } from '../../types/category'
+import type { CategoryResult, ExpenseCategory, LineItemCategory } from '../../types/category'
 
 // Deterministic keyword rules, not the VLM — categorizing "Coffee House"
 // as Meals doesn't need a multi-minute AI call. Keeps this genuinely fast
@@ -14,16 +14,17 @@ const CATEGORY_KEYWORDS: Record<Exclude<ExpenseCategory, 'Other'>, string[]> = {
   Travel: [
     'taxi', 'uber', 'lyft', 'cab', 'flight', 'airline', 'airways', 'airport',
     'train', 'railway', 'metro', 'transit', 'parking', 'toll', 'car rental',
-    'fuel', 'gas station', 'petrol',
+    'fuel', 'gas station', 'petrol', 'baggage', 'boarding',
   ],
   Meals: [
     'restaurant', 'cafe', 'coffee', 'bistro', 'diner', 'bakery', 'pizza',
     'burger', 'food', 'kitchen', 'grill', 'eatery', 'catering', 'canteen',
-    'uber eats', 'doordash', 'grubhub',
+    'uber eats', 'doordash', 'grubhub', 'breakfast', 'lunch', 'dinner', 'meal',
+    'latte', 'espresso', 'sandwich', 'room service', 'minibar',
   ],
   Lodging: [
     'hotel', 'inn', 'motel', 'resort', 'lodge', 'suites', 'hostel',
-    'accommodation', 'guesthouse',
+    'accommodation', 'guesthouse', 'room', 'night', 'lodging',
   ],
   Communication: [
     'phone', 'mobile', 'telecom', 'internet', 'wifi', 'broadband',
@@ -35,6 +36,20 @@ function textToMatch(data: ExtractedReceiptData): string {
   const vendor = data.vendor ?? ''
   const lineItemText = data.lineItems.map((item) => item.description).join(' ')
   return `${vendor} ${lineItemText}`.toLowerCase()
+}
+
+// Whole words only (a plural "s"/"es" allowed). Found in the pre-submission
+// audit: plain substring matching put "Dinner" in Lodging ("inn"),
+// "Cabernet Sauvignon" in Travel ("cab") and "Automobile Club" in
+// Communication ("mobile").
+const keywordPatterns = new Map<string, RegExp>()
+function matchesKeyword(text: string, keyword: string): boolean {
+  let pattern = keywordPatterns.get(keyword)
+  if (!pattern) {
+    pattern = new RegExp(`\\b${keyword.replace(/\s+/g, '\\s+')}(?:s|es)?\\b`)
+    keywordPatterns.set(keyword, pattern)
+  }
+  return pattern.test(text)
 }
 
 /** Weight a match by how many words it spans — "uber eats" (2 words)
@@ -62,12 +77,15 @@ export function classifyCategory(data: ExtractedReceiptData): CategoryResult {
   if (!text.trim()) {
     return { category: 'Other', confidence: 0, reason: 'No vendor or line-item text to classify from.' }
   }
+  return classifyText(text)
+}
 
+function classifyText(text: string): CategoryResult {
   const scores: CategoryScore[] = (
     Object.entries(CATEGORY_KEYWORDS) as [Exclude<ExpenseCategory, 'Other'>, string[]][]
   )
     .map(([category, keywords]) => {
-      const matches = keywords.filter((kw) => text.includes(kw))
+      const matches = keywords.filter((kw) => matchesKeyword(text, kw))
       const score = matches.reduce((sum, kw) => sum + keywordWeight(kw), 0)
       return { category, score, matches }
     })
@@ -100,4 +118,19 @@ export function classifyCategory(data: ExtractedReceiptData): CategoryResult {
     confidence,
     reason: `Matched keyword(s): ${winner.matches.join(', ')}`,
   }
+}
+
+/** Maps each line item to a policy category, as the brief asks, using the
+ * same keyword rules on that line's own description. A line whose wording
+ * names no category ("Latte" on a café bill, "Croissant") takes the
+ * receipt's category rather than being guessed; `inherited` says so. This
+ * is what lets a hotel bill with a restaurant charge show the charge as
+ * Meals while the bill itself stays Lodging. */
+export function classifyLineItems(data: ExtractedReceiptData, receiptCategory: ExpenseCategory): LineItemCategory[] {
+  return data.lineItems.map((item) => {
+    const own = classifyText(item.description.toLowerCase())
+    return own.category === 'Other'
+      ? { description: item.description, amount: item.amount, category: receiptCategory, inherited: true }
+      : { description: item.description, amount: item.amount, category: own.category, inherited: false }
+  })
 }

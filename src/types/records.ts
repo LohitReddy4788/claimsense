@@ -1,3 +1,5 @@
+import type { LineItemCategory } from './category'
+
 export interface ReceiptRecord {
   receiptId: string
   fileName: string
@@ -37,6 +39,9 @@ export interface PolicySettingsRecord {
 export interface ClaimRecord {
   claimId: string
   receiptId: string
+  /** Who the claim is for (entered on Upload Receipts — receipts don't
+   * print it). Null only on claims created before it was stored. */
+  employeeId: string | null
   /** Reused for exact-file duplicate detection (gap-fix #1) without a join
    * back to the receipts table. */
   fileHash: string
@@ -50,6 +55,11 @@ export interface ClaimRecord {
   date: string | null
   category: string
   travelRequestId: string | null
+  /** MATCHED = auto-linked; REVIEW = travelRequestId is only a suggestion
+   * for the reviewer; UNMATCHED = no trip. Null on older claims. */
+  travelMatch: 'MATCHED' | 'REVIEW' | 'UNMATCHED' | null
+  /** Each line item with its own policy category (classifyLineItems). */
+  lineItems: LineItemCategory[]
   policyResult: 'PASS' | 'VIOLATION' | 'REVIEW' | null
   policyReasonCode: string | null
   /** claimId of the existing claim this one appears to duplicate, if any

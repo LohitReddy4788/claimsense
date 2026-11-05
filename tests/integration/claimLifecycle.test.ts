@@ -40,6 +40,7 @@ async function ingestAndBuild(file: File, data: ExtractedReceiptData = meal) {
   const policy = evaluatePolicy(data, 'Meals', await repo.listPolicies(), SETTINGS)
   return populateClaim({
     receiptId: ingested.receipt.receiptId,
+    employeeId: 'EMP001',
     fileHash: ingested.receipt.fileHash,
     data,
     extractionStatus: 'valid',
@@ -77,6 +78,31 @@ describe('Sheet Populator Agent', () => {
   it('builds a clean draft when every check passes', async () => {
     const claim = await ingestAndBuild(png('a.png'))
     expect(claim).toMatchObject({ status: 'draft', policyResult: 'PASS', duplicateOfClaimId: null })
+  })
+
+  it('stores who the claim is for, the trip-match status and categorised line items (audit fix)', async () => {
+    const claim = await ingestAndBuild(png('a.png'), {
+      ...meal,
+      lineItems: [
+        { description: 'Croissant', amount: 5.5 },
+        { description: 'Parking', amount: 4 },
+      ],
+    })
+    const stored = await repo.getClaim(claim.claimId)
+    expect(stored).toMatchObject({
+      employeeId: 'EMP001',
+      travelMatch: 'UNMATCHED',
+      lineItems: [
+        { description: 'Croissant', amount: 5.5, category: 'Meals', inherited: true },
+        { description: 'Parking', amount: 4, category: 'Travel', inherited: false },
+      ],
+    })
+  })
+
+  it('marks the receipt processed once its claim exists (audit fix)', async () => {
+    const claim = await ingestAndBuild(png('a.png'))
+    const receipt = (await repo.listReceipts()).find((r) => r.receiptId === claim.receiptId)
+    expect(receipt?.status).toBe('processed')
   })
 
   it('routes a policy violation to review with its reason code', async () => {
@@ -154,7 +180,10 @@ describe('Claims spreadsheet export', () => {
   })
 
   it('exports only approved claims, with policy and audit columns', async () => {
-    const approved = await ingestAndBuild(png('lunch.png', '1'))
+    const approved = await ingestAndBuild(png('lunch.png', '1'), {
+      ...meal,
+      lineItems: [{ description: 'Sandwich', amount: 12 }],
+    })
     await ingestAndBuild(png('other.png', '2'), { ...meal, vendor: 'Other Cafe', amount: 120 })
     await approveClaim(approved.claimId)
 
@@ -173,8 +202,14 @@ describe('Claims spreadsheet export', () => {
       Currency: 'USD',
       Category: 'Meals',
       'Policy Result': 'PASS',
+      Employee: 'EMP001',
+      'Travel Match': 'UNMATCHED',
     })
     expect(rows[0]['Approved At']).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    const items = XLSX.utils.sheet_to_json<Record<string, unknown>>(XLSX.read(bytes).Sheets['Line Items'])
+    expect(items).toEqual([
+      { 'Claim ID': approved.claimId, Description: 'Sandwich', Amount: 12, Category: 'Meals', 'Category Source': 'line text' },
+    ])
   })
 
   it('leaves an intact audit chain after the whole lifecycle', async () => {

@@ -108,6 +108,7 @@ export const orchestratorMachine = setup({
         )
         const claim = await populateClaim({
           receiptId: input.receiptId,
+          employeeId: input.employeeId,
           fileHash: input.fileHash,
           data: validated.data,
           extractionStatus: validated.status,

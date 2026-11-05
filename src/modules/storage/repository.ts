@@ -73,6 +73,8 @@ async function updateFields(table: TableMap, key: unknown, patch: object) {
 // Receipts
 export const listReceipts = () => selectAll<ReceiptRecord>(TABLES.receipts, 'ORDER BY uploaded_at DESC')
 export const addReceipt = (r: ReceiptRecord) => insert(TABLES.receipts, r)
+export const updateReceiptStatus = (receiptId: string, status: ReceiptRecord['status']) =>
+  updateFields(TABLES.receipts, receiptId, { status })
 
 // Travel requests
 export const listTravelRequests = () => selectAll<TravelRequestRecord>(TABLES.travelRequests, 'ORDER BY start_date')

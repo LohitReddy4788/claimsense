@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyCategory } from '../../src/agents/category/classifyCategory'
+import { classifyCategory, classifyLineItems } from '../../src/agents/category/classifyCategory'
 import type { ExtractedReceiptData } from '../../src/types/extraction'
 
 const receipt = (vendor: string | null, items: string[] = []): ExtractedReceiptData => ({
@@ -56,9 +56,46 @@ describe('Category Classifier Agent', () => {
     expect(r.reason).toMatch(/Ambiguous/)
   })
 
+  it.each([
+    ['Dinner', 'Meals'], // used to be Lodging: "inn" inside "dinner"
+    ['Cabernet Sauvignon', 'Other'], // used to be Travel: "cab"
+    ['Automobile Club', 'Other'], // used to be Communication: "mobile"
+    ['Beginner Workshop', 'Other'], // used to be Lodging: "inn"
+    ['Avis Car Rentals', 'Travel'], // plurals still match
+  ])('matches whole words only: %s is %s (audit fix)', (vendor, expected) => {
+    expect(classifyCategory(receipt(vendor)).category).toBe(expected)
+  })
+
+  it('lets "room service" (Meals) beat "room" (Lodging)', () => {
+    expect(classifyCategory(receipt('Room service')).category).toBe('Meals')
+  })
+
   it('keeps confidence between 0.6 and 0.95 for a real match', () => {
     const r = classifyCategory(receipt('Hotel Inn Resort Suites Lodge'))
     expect(r.confidence).toBeGreaterThanOrEqual(0.6)
     expect(r.confidence).toBeLessThanOrEqual(0.95)
+  })
+})
+
+describe('Category Classifier Agent: each line item', () => {
+  it('splits a hotel bill into its own categories', () => {
+    const items = classifyLineItems(
+      receipt('Harbor Hotel', ['Room Boston 2 nights', 'Restaurant dinner', 'Parking', 'City levy']),
+      'Lodging',
+    )
+    expect(items.map((i) => [i.category, i.inherited])).toEqual([
+      ['Lodging', false],
+      ['Meals', false],
+      ['Travel', false],
+      ['Lodging', true], // no category in its own text: takes the receipt's
+    ])
+  })
+
+  it('keeps each line’s amount', () => {
+    expect(classifyLineItems(receipt('Cafe', ['Latte']), 'Meals')[0]).toMatchObject({ description: 'Latte', amount: 1 })
+  })
+
+  it('returns nothing for a receipt with no line items', () => {
+    expect(classifyLineItems(receipt('Cafe'), 'Meals')).toEqual([])
   })
 })

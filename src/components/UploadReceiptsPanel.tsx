@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { ingestReceipt } from '../agents/ingestion/ingestReceipt'
-import { processDocument } from '../modules/document-processing/processDocument'
+import { processDocument, MAX_RECEIPT_PAGES } from '../modules/document-processing/processDocument'
 import { readReceiptFile } from '../modules/storage/opfs'
 import { runOrchestrator, type OrchestratorPhase } from '../agents/orchestrator/runOrchestrator'
 import { LoadingState, errorText } from './LoadingState'
@@ -342,7 +342,9 @@ export function UploadReceiptsPanel() {
                     {preview?.status === 'ready' && (
                       <p className="mt-0.5 text-xs text-white/50">
                         Processed: {preview.width}×{preview.height}px
-                        {preview.pageCount && preview.pageCount > 1 ? ` · ${preview.pageCount} pages` : ''}
+                        {preview.pageCount && preview.pageCount > 1
+                          ? ` · ${preview.pageCount} pages${preview.pageCount > MAX_RECEIPT_PAGES ? `, first ${MAX_RECEIPT_PAGES} read` : ''}`
+                          : ''}
                       </p>
                     )}
                     {preview?.status === 'failed' && (

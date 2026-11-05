@@ -65,7 +65,13 @@ CREATE TABLE IF NOT EXISTS claims (
   created_at              TIMESTAMPTZ NOT NULL,
   approved_at             TIMESTAMPTZ
 );
+-- Added 2026-11-05 (pre-submission audit); ADD COLUMN IF NOT EXISTS so a
+-- database created before then gains them on its next start.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS employee_id TEXT;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS travel_match TEXT;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS line_items JSONB NOT NULL DEFAULT '[]';
 CREATE INDEX IF NOT EXISTS idx_claims_receipt ON claims(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_claims_employee ON claims(employee_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_created ON claims(created_at);
 
@@ -134,10 +140,11 @@ export const TABLES = {
   claims: {
     sql: 'claims', pk: 'claim_id', pkField: 'claimId',
     cols: [
-      ['claim_id', 'claimId'], ['receipt_id', 'receiptId'], ['file_hash', 'fileHash'],
+      ['claim_id', 'claimId'], ['receipt_id', 'receiptId'], ['employee_id', 'employeeId'], ['file_hash', 'fileHash'],
       ['vendor', 'vendor'], ['amount', 'amount', 'numeric'], ['currency', 'currency'],
       ['receipt_date', 'date'], ['category', 'category'],
-      ['travel_request_id', 'travelRequestId'], ['policy_result', 'policyResult'],
+      ['travel_request_id', 'travelRequestId'], ['travel_match', 'travelMatch'],
+      ['line_items', 'lineItems', 'jsonb'], ['policy_result', 'policyResult'],
       ['policy_reason_code', 'policyReasonCode'], ['duplicate_of_claim_id', 'duplicateOfClaimId'],
       ['line_item_review_reason', 'lineItemReviewReason'], ['status', 'status'],
       ['created_at', 'createdAt', 'timestamptz'], ['approved_at', 'approvedAt', 'timestamptz'],
@@ -273,7 +280,7 @@ async function migrateFromDexie(pg: PGliteWorker) {
   // Claims reference each other (duplicate_of_claim_id): insert without that
   // link first, then restore it once every claim exists.
   const claims = await read('claims')
-  await copy('claims', claims.map((c) => ({ ...c, duplicateOfClaimId: null })))
+  await copy('claims', claims.map((c) => ({ ...c, lineItems: c.lineItems ?? [], duplicateOfClaimId: null })))
   for (const c of claims) {
     if (c.duplicateOfClaimId) {
       await pg
