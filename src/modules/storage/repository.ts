@@ -1,4 +1,4 @@
-import { getPg, placeholder, selectList, toParam, toRecord, TABLES, type Row, type TableMap } from './pg'
+import { getPg, MIGRATION_KEY, placeholder, selectList, toParam, toRecord, TABLES, type Row, type TableMap } from './pg'
 import type {
   AuditLogRecord,
   ClaimReportRecord,
@@ -164,5 +164,20 @@ export async function appendAuditLog(
       [id, entry.entityId, entry.action, entry.detail, entry.currentHash, entry.previousHash, entry.timestamp],
     )
     return { ...entry, id }
+  })
+}
+
+/** Deletes every record — receipts, claims, reports, trips, policies,
+ * rates, the audit log, the admin PIN and employee passwords — in one
+ * transaction, so a half-done reset can't leave orphans. Only the note
+ * that the old pre-Postgres data was already carried over is kept, so it
+ * isn't imported again. */
+export async function resetAllData(): Promise<void> {
+  const pg = await getPg()
+  await pg.transaction(async (tx) => {
+    await tx.query(
+      'TRUNCATE claims, claim_reports, receipts, travel_requests, policies, policy_settings, audit_logs CASCADE',
+    )
+    await tx.query('DELETE FROM app_meta WHERE key <> $1', [MIGRATION_KEY])
   })
 }

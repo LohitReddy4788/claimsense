@@ -195,3 +195,32 @@ describe('Employee password (employee portal sign-in)', () => {
     expect((await repo.listAuditLogs()).filter((e) => e.action === 'EMPLOYEE_ENROLLED')).toHaveLength(1)
   })
 })
+
+describe('Reset all data (admin)', () => {
+  it('empties every table and the passwords, keeps the old-data import note, and starts a new audit log', async () => {
+    const pg = await currentDb()
+    await pg.query(`INSERT INTO app_meta (key, value) VALUES ('dexie_migrated_at', 'x') ON CONFLICT (key) DO NOTHING`)
+    await repo.addReceipt({
+      receiptId: 'rec_1', fileName: 'a.png', fileType: 'png', fileSize: 1, opfsPath: 'receipts/rec_1',
+      fileHash: 'h', status: 'processed', uploadedAt: '2026-03-01T00:00:00.000Z',
+    })
+    await repo.addTravelRequest({ requestId: 'TR-1', employeeId: 'EMP001', destination: 'Boston', startDate: '2026-03-10', endDate: '2026-03-14', approvalStatus: 'approved' })
+    await repo.addPolicy({ policyId: 'p1', category: 'Meals', limitAmount: 75 })
+    await repo.putPolicySettings({ id: 'default', baseCurrency: 'USD', rates: { EUR: 1.1 } })
+    await repo.putMeta('admin_pin', '{}')
+    await repo.putMeta('employee_password:EMP001', '{}')
+    await appendAuditEntry('rec_1', 'RECEIPT_INGESTED', 'a.png')
+
+    await repo.resetAllData()
+
+    for (const table of ['receipts', 'claims', 'claim_reports', 'travel_requests', 'policies', 'policy_settings', 'audit_logs']) {
+      expect((await pg.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]).toEqual({ n: 0 })
+    }
+    expect(await repo.getMeta('admin_pin')).toBeUndefined()
+    expect(await repo.getMeta('employee_password:EMP001')).toBeUndefined()
+    expect(await repo.getMeta('dexie_migrated_at')).toBe('x')
+
+    await appendAuditEntry('admin', 'DATA_RESET', 'all data removed')
+    expect(await verifyAuditChain()).toMatchObject({ valid: true, totalEntries: 1 })
+  })
+})

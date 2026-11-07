@@ -9,6 +9,7 @@ import { AuditLogsPanel } from './components/AuditLogsPanel'
 import { PwaUpdateBanner } from './components/PwaUpdateBanner'
 import { SqlConsolePanel } from './components/SqlConsolePanel'
 import { PortalLogin } from './components/PortalLogin'
+import { ResetDataCard } from './components/ResetDataCard'
 import { PORTAL_SECTIONS, type DashboardSection, type Session } from './types/dashboard'
 
 const SESSION_KEY = 'claimsense.session'
@@ -54,7 +55,12 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           travel: <TravelRequestsPanel portal="admin" />,
           policies: <PoliciesPanel />,
           audit: <AuditLogsPanel active={active === 'audit'} />,
-          database: <SqlConsolePanel active={active === 'database'} />,
+          database: (
+            <>
+              <SqlConsolePanel active={active === 'database'} />
+              <ResetDataCard />
+            </>
+          ),
         }
 
   return (

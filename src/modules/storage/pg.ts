@@ -251,7 +251,7 @@ export function getPg(): Promise<PGliteWorker> {
   return pgPromise
 }
 
-const MIGRATION_KEY = 'dexie_migrated_at'
+export const MIGRATION_KEY = 'dexie_migrated_at'
 
 async function upsertRaw(pg: PGliteWorker, table: TableMap, record: Row) {
   const cols = table.cols.map((c) => c[0])

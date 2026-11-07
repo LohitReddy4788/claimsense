@@ -32,3 +32,13 @@ export async function hashFile(file: File): Promise<string> {
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
 }
+
+/** Deletes every stored receipt file (the whole receipts folder). */
+export async function deleteAllReceiptFiles(): Promise<void> {
+  const root = await navigator.storage.getDirectory()
+  try {
+    await root.removeEntry(RECEIPTS_DIR, { recursive: true })
+  } catch (err) {
+    if (!(err instanceof DOMException && err.name === 'NotFoundError')) throw err
+  }
+}
