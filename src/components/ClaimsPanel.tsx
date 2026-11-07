@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download, Loader2, Save, ShieldCheck, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
+import { Download, Loader2, Save, ShieldCheck, ShieldX, ShieldAlert, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { editClaim, approveClaim } from '../agents/review/reviewClaim'
 import { exportApprovedClaims } from '../agents/export/exportClaims'
@@ -7,7 +7,7 @@ import { submitReport, readyForReport, totalsByCurrency } from '../agents/review
 import { EXPENSE_CATEGORIES } from '../types/category'
 import { dateReadings, normalizeReceiptDate } from '../utils/receiptDate'
 import { LoadingState, errorText } from './LoadingState'
-import type { ClaimRecord, ClaimReportRecord, ReceiptRecord } from '../types/records'
+import type { ClaimRecord, ClaimReportRecord, ReceiptRecord, TravelRequestRecord } from '../types/records'
 
 interface EditBuffer {
   vendor: string
@@ -32,6 +32,26 @@ function isDirty(c: ClaimRecord, buf: EditBuffer): boolean {
   return (Object.keys(original) as (keyof EditBuffer)[]).some((k) => original[k].trim() !== buf[k].trim())
 }
 
+// "MEALS_LIMIT_EXCEEDED" -> "Meals limit exceeded"
+function readableCode(code: string): string {
+  const words = code.toLowerCase().split('_').join(' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+const POLICY_BADGE = {
+  PASS: { label: 'Policy passed', Icon: ShieldCheck, cls: 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300' },
+  VIOLATION: { label: 'Policy violation', Icon: ShieldX, cls: 'border-red-400/50 bg-red-400/10 text-red-300' },
+  REVIEW: { label: 'Needs review', Icon: ShieldAlert, cls: 'border-amber-400/50 bg-amber-400/10 text-amber-300' },
+} as const
+
+const TRIP_BADGE = {
+  linked: 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300',
+  suggested: 'border-amber-400/50 bg-amber-400/10 text-amber-300',
+  none: 'border-white/20 text-white/50',
+} as const
+
+const BADGE = 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium'
+
 interface ClaimsPanelProps {
   /** Panels stay mounted for the whole session (Phase 5's fix) — without
    * this, a claim created in Upload Receipts after this panel first
@@ -54,14 +74,25 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
   const [reports, setReports] = useState<ClaimReportRecord[]>([])
   const [reportMessage, setReportMessage] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState<string | null>(null)
+  const [tripsById, setTripsById] = useState<Record<string, TravelRequestRecord>>({})
+
+  // The trip a claim is linked to, in words a reviewer recognises (its
+  // internal ID means nothing to them). Falls back to the ID if the trip
+  // can't be found.
+  function tripLabel(id: string): string {
+    const trip = tripsById[id]
+    return trip ? `${trip.destination} trip, ${trip.startDate} to ${trip.endDate}` : id
+  }
 
   async function refresh() {
     try {
-      const [allClaims, allReceipts, allReports] = await Promise.all([
+      const [allClaims, allReceipts, allReports, allTrips] = await Promise.all([
         repo.listClaims(),
         repo.listReceipts(),
         repo.listReports(),
+        repo.listTravelRequests(),
       ])
+      setTripsById(Object.fromEntries(allTrips.map((t) => [t.requestId, t])))
       setClaims(allClaims)
       setReports(allReports)
       setReceiptsById(Object.fromEntries(allReceipts.map((r) => [r.receiptId, r])))
@@ -352,25 +383,44 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                   </label>
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-white/10 pt-2.5 text-xs text-white/50">
-                  <span className="flex items-center gap-1">
-                    <Plane className="h-3 w-3" strokeWidth={1.75} />
-                    {!c.travelRequestId
-                      ? 'not linked'
-                      : c.travelMatch === 'REVIEW'
-                        ? `suggested trip, check it (${c.travelRequestId})`
-                        : `linked (${c.travelRequestId})`}
-                  </span>
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3 text-xs">
+                  {(() => {
+                    const badge = c.policyResult ? POLICY_BADGE[c.policyResult] : null
+                    if (!badge) return <span className={`${BADGE} ${TRIP_BADGE.none}`}>Policy not checked</span>
+                    const { Icon } = badge
+                    return (
+                      <span
+                        className={`${BADGE} ${badge.cls}`}
+                        title={`Re-checked against the policy whenever amount, currency or category is saved${c.policyReasonCode ? ` (${c.policyReasonCode})` : ''}`}
+                      >
+                        <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+                        {badge.label}
+                        {c.policyReasonCode && c.policyResult !== 'PASS' && <span className="font-normal opacity-90">· {readableCode(c.policyReasonCode)}</span>}
+                      </span>
+                    )
+                  })()}
+                  {!c.travelRequestId ? (
+                    <span className={`${BADGE} ${TRIP_BADGE.none}`}>
+                      <Plane className="h-3.5 w-3.5" strokeWidth={1.75} />
+                      No trip linked
+                    </span>
+                  ) : c.travelMatch === 'REVIEW' ? (
+                    <span className={`${BADGE} ${TRIP_BADGE.suggested}`} title="Close to a trip but not certain; check it">
+                      <CircleAlert className="h-3.5 w-3.5" strokeWidth={2} />
+                      Suggested: {tripLabel(c.travelRequestId)}
+                    </span>
+                  ) : (
+                    <span className={`${BADGE} ${TRIP_BADGE.linked}`}>
+                      <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} />
+                      Trip matched: {tripLabel(c.travelRequestId)}
+                    </span>
+                  )}
                   {c.employeeId && (
-                    <span className="flex items-center gap-1">
-                      <User className="h-3 w-3" strokeWidth={1.75} />
+                    <span className={`${BADGE} ${TRIP_BADGE.none}`}>
+                      <User className="h-3.5 w-3.5" strokeWidth={1.75} />
                       {c.employeeId}
                     </span>
                   )}
-                  <span title="Re-checked against the policy whenever amount, currency or category is saved">
-                    Policy: {c.policyResult ?? '—'}
-                    {c.policyReasonCode && ` (${c.policyReasonCode})`}
-                  </span>
                 </div>
 
                 {c.lineItems.length > 0 && (
