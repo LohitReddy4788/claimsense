@@ -16,7 +16,7 @@ const repo = await import('../../src/modules/storage/repository')
 const { ingestReceipt } = await import('../../src/agents/ingestion/ingestReceipt')
 const { populateClaim } = await import('../../src/agents/sheet/populateClaim')
 const { editClaim, approveClaim } = await import('../../src/agents/review/reviewClaim')
-const { buildApprovedClaimsWorkbook } = await import('../../src/agents/export/exportClaims')
+const { buildApprovedClaimsWorkbook, buildClaimsWorkbook } = await import('../../src/agents/export/exportClaims')
 const { submitReport } = await import('../../src/agents/review/submitReport')
 const { verifyAuditChain } = await import('../../src/modules/audit/auditLog')
 const { evaluatePolicy } = await import('../../src/modules/policy/policyEngine')
@@ -175,6 +175,27 @@ describe('Review & Submit Agent', () => {
 })
 
 describe('Claims spreadsheet export', () => {
+  it('downloads approved, not approved, or all claims, each with its status', async () => {
+    const a = await ingestAndBuild(png('lunch.png', '1'))
+    const b = await ingestAndBuild(png('other.png', '2'), { ...meal, vendor: 'Other Cafe', amount: 120 })
+    await approveClaim(a.claimId)
+    const sheetRows = async (scope: 'approved' | 'pending' | 'all', sheet: string) => {
+      const built = await buildClaimsWorkbook(scope)
+      if (!built.success) throw new Error(built.reason)
+      const wb = XLSX.read(XLSX.write(built.workbook, { type: 'array', bookType: 'xlsx' }))
+      return XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[sheet]).map((r) => [r['Claim ID'], r.Status])
+    }
+    expect(await sheetRows('approved', 'Approved Claims')).toEqual([[a.claimId, 'approved']])
+    expect(await sheetRows('pending', 'Not Approved Claims')).toEqual([[b.claimId, b.status]])
+    expect((await sheetRows('all', 'All Claims')).map(([id]) => id).sort()).toEqual([a.claimId, b.claimId].sort())
+  })
+
+  it('says so when there is nothing unapproved to download', async () => {
+    const a = await ingestAndBuild(png('lunch.png', '1'))
+    await approveClaim(a.claimId)
+    expect(await buildClaimsWorkbook('pending')).toMatchObject({ success: false })
+  })
+
   it('refuses to export before anything is approved', async () => {
     await ingestAndBuild(png('a.png'))
     expect(await buildApprovedClaimsWorkbook()).toMatchObject({ success: false })

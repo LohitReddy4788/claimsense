@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Download, Loader2, Save, ShieldCheck, ShieldX, ShieldAlert, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { editClaim, approveClaim } from '../agents/review/reviewClaim'
-import { exportApprovedClaims } from '../agents/export/exportClaims'
+import { exportClaims, type ExportScope } from '../agents/export/exportClaims'
 import { submitReport, readyForReport, totalsByCurrency } from '../agents/review/submitReport'
 import { EXPENSE_CATEGORIES } from '../types/category'
 import { dateReadings, normalizeReceiptDate } from '../utils/receiptDate'
@@ -68,7 +68,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
   const [edits, setEdits] = useState<Record<string, EditBuffer>>({})
   const [message, setMessage] = useState<Record<string, string>>({})
   const [exportMessage, setExportMessage] = useState<string | null>(null)
-  const [exporting, setExporting] = useState(false)
+  const [exporting, setExporting] = useState<ExportScope | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [reports, setReports] = useState<ClaimReportRecord[]>([])
@@ -203,16 +203,25 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
       .map(([currency, amount]) => `${amount.toFixed(2)} ${currency}`)
       .join(' + ') || '—'
 
-  async function handleExport() {
-    setExporting(true)
-    const result = await exportApprovedClaims()
-    setExportMessage(
-      result.success
-        ? `✓ Exported ${result.claimCount} approved claim(s) to ${result.fileName}`
-        : `⚠ ${result.reason}`,
-    )
-    setExporting(false)
+  async function handleExport(scope: ExportScope) {
+    setExporting(scope)
+    try {
+      const result = await exportClaims(scope)
+      setExportMessage(
+        result.success ? `✓ Downloaded ${result.claimCount} claim(s) as ${result.fileName}` : `⚠ ${result.reason}`,
+      )
+    } catch (err) {
+      setExportMessage(`⚠ Export failed: ${errorText(err)}`)
+    } finally {
+      setExporting(null)
+    }
   }
+  const approvedCount = claims.filter((c) => c.status === 'approved').length
+  const exportOptions: { scope: ExportScope; label: string; count: number }[] = [
+    { scope: 'approved', label: 'Approved', count: approvedCount },
+    { scope: 'pending', label: 'Not approved', count: claims.length - approvedCount },
+    { scope: 'all', label: 'All', count: claims.length },
+  ]
 
   return (
     <div>
@@ -220,15 +229,27 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
         <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
           Claims ({loaded ? claims.length : '…'})
         </p>
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={exporting}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-white/30 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:border-white hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} /> : <Download className="h-3.5 w-3.5" strokeWidth={1.75} />}
-          {exporting ? 'Exporting…' : 'Export approved claims (XLSX)'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1.5 text-xs text-white/50">
+            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+            Download (XLSX)
+          </span>
+          <div className="inline-flex overflow-hidden rounded-lg border border-white/30">
+            {exportOptions.map(({ scope, label, count }, i) => (
+              <button
+                key={scope}
+                type="button"
+                onClick={() => handleExport(scope)}
+                disabled={exporting !== null || count === 0}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 ${i > 0 ? 'border-l border-white/30' : ''}`}
+              >
+                {exporting === scope && <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />}
+                {label}
+                <span className="rounded-full bg-white/10 px-1.5 text-[10px] tabular-nums text-white/70">{loaded ? count : '…'}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       {exportMessage && <p className="mt-2 text-xs text-white/60">{exportMessage}</p>}
 

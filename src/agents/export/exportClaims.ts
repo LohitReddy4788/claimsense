@@ -3,6 +3,17 @@ import * as repo from '../../modules/storage/repository'
 import { appendAuditEntry } from '../../modules/audit/auditLog'
 import type { ClaimRecord } from '../../types/records'
 
+/** Which claims a download contains. Approved claims are the ones that
+ * passed the human gate; "not approved" (draft or flagged for review) is
+ * for a manager working through what's still open. */
+export type ExportScope = 'approved' | 'pending' | 'all'
+
+const SCOPE = {
+  approved: { sheet: 'Approved Claims', file: 'approved', words: 'approved', match: (c: ClaimRecord) => c.status === 'approved' },
+  pending: { sheet: 'Not Approved Claims', file: 'not-approved', words: 'not approved', match: (c: ClaimRecord) => c.status !== 'approved' },
+  all: { sheet: 'All Claims', file: 'all', words: '', match: () => true },
+} as const
+
 export type ExportResult =
   | { success: true; claimCount: number; fileName: string }
   | { success: false; reason: string }
@@ -14,6 +25,7 @@ export type WorkbookBuildResult =
 function claimToRow(claim: ClaimRecord, receiptFileName: string) {
   return {
     'Claim ID': claim.claimId,
+    Status: claim.status,
     Employee: claim.employeeId ?? '',
     Receipt: receiptFileName,
     Vendor: claim.vendor ?? '',
@@ -45,19 +57,32 @@ function claimToRow(claim: ClaimRecord, receiptFileName: string) {
  * exportApprovedClaims() so the actual row-mapping logic can be tested
  * directly (parse the workbook back and check its rows) without also
  * needing to intercept a real browser file-save dialog. */
-export async function buildApprovedClaimsWorkbook(): Promise<WorkbookBuildResult> {
+export function buildApprovedClaimsWorkbook(): Promise<WorkbookBuildResult> {
+  return buildClaimsWorkbook('approved')
+}
+
+export async function buildClaimsWorkbook(scope: ExportScope): Promise<WorkbookBuildResult> {
   const [allClaims, allReceipts] = await Promise.all([repo.listClaims(), repo.listReceipts()])
   const receiptsById = Object.fromEntries(allReceipts.map((r) => [r.receiptId, r]))
+  const { sheet, match } = SCOPE[scope]
 
-  const approved = allClaims.filter((c) => c.status === 'approved')
+  const approved = allClaims.filter(match)
   if (approved.length === 0) {
-    return { success: false, reason: 'No approved claims to export yet — approve at least one claim first.' }
+    return {
+      success: false,
+      reason:
+        scope === 'approved'
+          ? 'No approved claims to export yet — approve at least one claim first.'
+          : scope === 'pending'
+            ? 'Every claim is approved; there are no unapproved claims to export.'
+            : 'There are no claims to export yet.',
+    }
   }
 
   const rows = approved.map((c) => claimToRow(c, receiptsById[c.receiptId]?.fileName ?? c.receiptId))
   const worksheet = XLSX.utils.json_to_sheet(rows)
   const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Approved Claims')
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheet)
 
   // One row per line item with its own category, so a hotel bill's
   // restaurant charge is visible as Meals rather than hidden in Lodging.
@@ -74,8 +99,9 @@ export async function buildApprovedClaimsWorkbook(): Promise<WorkbookBuildResult
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(lineRows), 'Line Items')
   }
 
-  // The submitted expense claims themselves, one row per report.
-  const reports = await repo.listReports()
+  // The submitted expense claims themselves, one row per report (only
+  // approved claims can be in a report).
+  const reports = scope === 'pending' ? [] : await repo.listReports()
   if (reports.length > 0) {
     const reportRows = reports.map((r) => ({
       'Report ID': r.reportId,
@@ -92,19 +118,24 @@ export async function buildApprovedClaimsWorkbook(): Promise<WorkbookBuildResult
   return { success: true, workbook, claimCount: approved.length }
 }
 
-export async function exportApprovedClaims(): Promise<ExportResult> {
-  const built = await buildApprovedClaimsWorkbook()
+export function exportApprovedClaims(): Promise<ExportResult> {
+  return exportClaims('approved')
+}
+
+export async function exportClaims(scope: ExportScope): Promise<ExportResult> {
+  const built = await buildClaimsWorkbook(scope)
   if (!built.success) {
     return built
   }
 
-  const fileName = `claimsense-export-${new Date().toISOString().slice(0, 10)}.xlsx`
+  const fileName = `claimsense-${SCOPE[scope].file}-claims-${new Date().toISOString().slice(0, 10)}.xlsx`
   XLSX.writeFile(built.workbook, fileName)
 
+  const words = SCOPE[scope].words
   await appendAuditEntry(
     'export',
     'CLAIMS_EXPORTED',
-    `${built.claimCount} approved claim(s) exported to ${fileName}`,
+    `${built.claimCount} ${words ? `${words} ` : ''}claim(s) exported to ${fileName}`,
   )
 
   return { success: true, claimCount: built.claimCount, fileName }
