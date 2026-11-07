@@ -40,6 +40,8 @@ function claimToRow(claim: ClaimRecord, receiptFileName: string) {
     'Duplicate Of': claim.duplicateOfClaimId ?? '',
     'Consistency Check': claim.lineItemReviewReason ?? '',
     'Approved At': claim.approvedAt ?? '',
+    'Rejected At': claim.rejectedAt ?? '',
+    'Rejection Reason': claim.rejectionReason ?? '',
     'Report ID': claim.reportId ?? '',
   }
 }

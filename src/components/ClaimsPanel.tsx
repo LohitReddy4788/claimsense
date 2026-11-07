@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Download, Loader2, Save, ShieldCheck, ShieldX, ShieldAlert, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
+import { Download, Loader2, Save, ShieldCheck, XCircle, RotateCcw, ShieldX, ShieldAlert, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
-import { editClaim, approveClaim } from '../agents/review/reviewClaim'
+import { editClaim, approveClaim, rejectClaim, reopenClaim } from '../agents/review/reviewClaim'
 import { exportClaims, type ExportScope } from '../agents/export/exportClaims'
 import { submitReport, readyForReport, totalsByCurrency } from '../agents/review/submitReport'
 import { EXPENSE_CATEGORIES } from '../types/category'
@@ -75,6 +75,8 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
   const [reportMessage, setReportMessage] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState<string | null>(null)
   const [tripsById, setTripsById] = useState<Record<string, TravelRequestRecord>>({})
+  // Claims whose Reject is open, with the reason being typed.
+  const [rejecting, setRejecting] = useState<Record<string, string>>({})
 
   // The trip a claim is linked to, in words a reviewer recognises (its
   // internal ID means nothing to them). Falls back to the ID if the trip
@@ -178,6 +180,33 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
         ...m,
         [claimId]: `Could not approve: ${err instanceof Error ? err.message : String(err)}`,
       }))
+    }
+  }
+
+  async function handleReject(claimId: string) {
+    try {
+      const result = await rejectClaim(claimId, rejecting[claimId] ?? '')
+      setMessage((m) => ({ ...m, [claimId]: result.success ? 'Rejected.' : `Could not reject: ${result.reason}` }))
+      if (result.success) {
+        setRejecting((r) => {
+          const next = { ...r }
+          delete next[claimId]
+          return next
+        })
+      }
+      await refresh()
+    } catch (err) {
+      setMessage((m) => ({ ...m, [claimId]: `Could not reject: ${errorText(err)}` }))
+    }
+  }
+
+  async function handleReopen(claimId: string) {
+    try {
+      const result = await reopenClaim(claimId)
+      setMessage((m) => ({ ...m, [claimId]: result.success ? 'Reopened for review.' : `Could not reopen: ${result.reason}` }))
+      await refresh()
+    } catch (err) {
+      setMessage((m) => ({ ...m, [claimId]: `Could not reopen: ${errorText(err)}` }))
     }
   }
 
@@ -315,12 +344,21 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
             const buf = edits[c.claimId] ?? toBuffer(c)
             const receipt = receiptsById[c.receiptId]
             const StatusIcon =
-              c.status === 'approved' ? CheckCircle2 : c.status === 'review' ? Clock : FileEdit
+              c.status === 'approved' ? CheckCircle2 : c.status === 'rejected' ? XCircle : c.status === 'review' ? Clock : FileEdit
+            const locked = c.status === 'approved' || c.status === 'rejected'
             return (
               <li key={c.claimId} className="rounded-2xl border border-white/15 p-4 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate font-medium text-white">{receipt?.fileName ?? c.receiptId}</p>
-                  <span className="inline-flex flex-none items-center gap-1 rounded-full border border-white/30 px-2.5 py-0.5 text-xs font-medium text-white/80">
+                  <span
+                    className={`inline-flex flex-none items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                      c.status === 'approved'
+                        ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300'
+                        : c.status === 'rejected'
+                          ? 'border-red-400/50 bg-red-400/10 text-red-300'
+                          : 'border-white/30 text-white/80'
+                    }`}
+                  >
                     <StatusIcon className="h-3 w-3" strokeWidth={1.75} />
                     {c.status}
                   </span>
@@ -345,7 +383,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                     <input
                       className="mt-0.5 w-full rounded-md border border-white/25 bg-black px-2 py-1 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40 disabled:opacity-40"
                       value={buf.vendor}
-                      disabled={c.status === 'approved'}
+                      disabled={locked}
                       onChange={(e) =>
                         setEdits((prev) => ({ ...prev, [c.claimId]: { ...buf, vendor: e.target.value } }))
                       }
@@ -356,7 +394,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                     <input
                       className="mt-0.5 w-full rounded-md border border-white/25 bg-black px-2 py-1 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40 disabled:opacity-40"
                       value={buf.amount}
-                      disabled={c.status === 'approved'}
+                      disabled={locked}
                       onChange={(e) =>
                         setEdits((prev) => ({ ...prev, [c.claimId]: { ...buf, amount: e.target.value } }))
                       }
@@ -367,7 +405,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                     <input
                       className="mt-0.5 w-full rounded-md border border-white/25 bg-black px-2 py-1 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40 disabled:opacity-40"
                       value={buf.currency}
-                      disabled={c.status === 'approved'}
+                      disabled={locked}
                       onChange={(e) =>
                         setEdits((prev) => ({ ...prev, [c.claimId]: { ...buf, currency: e.target.value } }))
                       }
@@ -379,7 +417,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                       className="mt-0.5 w-full rounded-md border border-white/25 bg-black px-2 py-1 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40 disabled:opacity-40"
                       value={buf.date}
                       placeholder="YYYY-MM-DD"
-                      disabled={c.status === 'approved'}
+                      disabled={locked}
                       onChange={(e) =>
                         setEdits((prev) => ({ ...prev, [c.claimId]: { ...buf, date: e.target.value } }))
                       }
@@ -390,7 +428,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                     <select
                       className="mt-0.5 w-full rounded-md border border-white/25 bg-black px-2 py-1 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40 disabled:opacity-40"
                       value={buf.category}
-                      disabled={c.status === 'approved'}
+                      disabled={locked}
                       onChange={(e) =>
                         setEdits((prev) => ({ ...prev, [c.claimId]: { ...buf, category: e.target.value } }))
                       }
@@ -466,7 +504,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                   </table>
                 )}
 
-                {c.status !== 'approved' && (
+                {!locked && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
@@ -484,9 +522,71 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                       <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
                       Approve
                     </button>
+                    {rejecting[c.claimId] === undefined ? (
+                      <button
+                        type="button"
+                        onClick={() => setRejecting((r) => ({ ...r, [c.claimId]: '' }))}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/60 px-3.5 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-400/10"
+                      >
+                        <XCircle className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        Reject
+                      </button>
+                    ) : (
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        <input
+                          autoFocus
+                          className="w-56 rounded-md border border-red-400/60 bg-black px-2 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-red-400/50"
+                          placeholder="Reason (optional), e.g. personal expense"
+                          value={rejecting[c.claimId]}
+                          onChange={(e) => setRejecting((r) => ({ ...r, [c.claimId]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleReject(c.claimId)
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleReject(c.claimId)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-400 bg-red-500/80 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-500"
+                        >
+                          <XCircle className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          Confirm reject
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRejecting((r) => {
+                              const next = { ...r }
+                              delete next[c.claimId]
+                              return next
+                            })
+                          }
+                          className="text-xs text-white/50 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    )}
                     {message[c.claimId] && (
                       <span className="text-xs text-white/50">{message[c.claimId]}</span>
                     )}
+                  </div>
+                )}
+                {c.status === 'rejected' && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                    <p className="flex items-center gap-1.5 font-semibold text-red-300">
+                      <XCircle className="h-3.5 w-3.5" strokeWidth={1.75} />
+                      Rejected {c.rejectedAt && new Date(c.rejectedAt).toLocaleString()}
+                      {c.rejectionReason && <span className="font-normal text-red-200/90">· {c.rejectionReason}</span>}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleReopen(c.claimId)}
+                      className="inline-flex items-center gap-1 rounded-md border border-white/30 px-2.5 py-1 font-medium text-white transition-colors hover:border-white hover:bg-white/5"
+                    >
+                      <RotateCcw className="h-3 w-3" strokeWidth={2} />
+                      Reopen
+                    </button>
+                    {message[c.claimId] && <span className="text-white/50">{message[c.claimId]}</span>}
                   </div>
                 )}
                 {c.status === 'approved' && (

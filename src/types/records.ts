@@ -74,7 +74,10 @@ export interface ClaimRecord {
    * (Name kept from when line items were the only check, to avoid a
    * database column rename.) */
   lineItemReviewReason: string | null
-  status: 'draft' | 'review' | 'approved'
+  status: 'draft' | 'review' | 'approved' | 'rejected'
+  /** Set when a reviewer rejects the claim; cleared if it's reopened. */
+  rejectedAt?: string | null
+  rejectionReason?: string | null
   /** The expense report this approved claim was submitted in; null until
    * then. */
   reportId: string | null

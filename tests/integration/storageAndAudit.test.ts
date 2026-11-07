@@ -52,6 +52,28 @@ describe('Repository on real PostgreSQL (PGlite)', () => {
     expect(await repo.getClaim('claim_old')).toMatchObject({ employeeId: null, travelMatch: null, lineItems: [] })
   })
 
+  it('lets a database made before rejections existed store a rejected claim', async () => {
+    const pg = await currentDb()
+    await repo.addReceipt({
+      receiptId: 'rec_old', fileName: 'old.png', fileType: 'png', fileSize: 1, opfsPath: 'receipts/rec_old',
+      fileHash: 'h', status: 'processed', uploadedAt: '2026-03-01T00:00:00.000Z',
+    })
+    // The old schema: three statuses, no rejection columns.
+    await pg.exec(`ALTER TABLE claims DROP CONSTRAINT claims_status_check;
+      ALTER TABLE claims ADD CONSTRAINT claims_status_check CHECK (status IN ('draft','review','approved'));
+      ALTER TABLE claims DROP COLUMN rejected_at, DROP COLUMN rejection_reason;`)
+    await pg.query(
+      `INSERT INTO claims (claim_id, receipt_id, file_hash, category, status, created_at)
+       VALUES ('claim_old', 'rec_old', 'h', 'Meals', 'draft', now())`,
+    )
+    const { SCHEMA } = await vi.importActual<typeof import('../../src/modules/storage/pg')>('../../src/modules/storage/pg')
+    await pg.exec(SCHEMA)
+    await pg.exec(SCHEMA) // and again: every start runs it
+    await repo.updateClaim('claim_old', { status: 'rejected', rejectionReason: 'x' })
+    expect(await repo.getClaim('claim_old')).toMatchObject({ status: 'rejected', rejectionReason: 'x' })
+    await expect(pg.query(`UPDATE claims SET status = 'bogus' WHERE claim_id = 'claim_old'`)).rejects.toThrow()
+  })
+
   it('keeps timestamps byte-identical, so audit hashes still verify after a reload', async () => {
     const written = await appendAuditEntry('rec_1', 'RECEIPT_INGESTED', 'a.png')
     const [read] = await repo.listAuditLogs()

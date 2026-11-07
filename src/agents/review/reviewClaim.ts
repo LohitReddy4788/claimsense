@@ -28,6 +28,7 @@ export async function editClaim(claimId: string, patch: Partial<ClaimEditableFie
   const before = await repo.getClaim(claimId)
   if (!before) throw new Error(`No claim found with id ${claimId}.`)
   if (before.status === 'approved') throw new Error('This claim is already approved and can no longer be edited.')
+  if (before.status === 'rejected') throw new Error('This claim was rejected; reopen it before editing.')
 
   await repo.updateClaim(claimId, patch)
   const fields = Object.entries(patch)
@@ -101,6 +102,9 @@ export async function approveClaim(claimId: string): Promise<ApproveResult> {
   if (claim.status === 'approved') {
     return { success: false, reason: 'This claim is already approved.' }
   }
+  if (claim.status === 'rejected') {
+    return { success: false, reason: 'This claim was rejected; reopen it before approving.' }
+  }
 
   const approvedAt = new Date().toISOString()
   await repo.updateClaim(claimId, { status: 'approved', approvedAt })
@@ -113,5 +117,37 @@ export async function approveClaim(claimId: string): Promise<ApproveResult> {
     return { success: false, reason: 'Claim was updated but could not be re-read afterward.' }
   }
   await appendAuditEntry(claimId, 'CLAIM_APPROVED', `approved at ${approvedAt}`)
+  return { success: true, claim: updated }
+}
+
+/** The reviewer's other decision: this claim won't be paid. It stays in
+ * the app (and in exports of claims not approved) with the reason, and
+ * the decision goes on the audit trail. An approved claim can't be
+ * rejected here, since it may already be in a submitted report. */
+export async function rejectClaim(claimId: string, reason: string): Promise<ApproveResult> {
+  const claim = await repo.getClaim(claimId)
+  if (!claim) return { success: false, reason: `No claim found with id ${claimId}.` }
+  if (claim.status === 'approved') return { success: false, reason: 'This claim is already approved.' }
+  if (claim.status === 'rejected') return { success: false, reason: 'This claim is already rejected.' }
+
+  const rejectedAt = new Date().toISOString()
+  const why = reason.trim() || null
+  await repo.updateClaim(claimId, { status: 'rejected', rejectedAt, rejectionReason: why })
+  const updated = await repo.getClaim(claimId)
+  if (!updated) return { success: false, reason: 'Claim was updated but could not be re-read afterward.' }
+  await appendAuditEntry(claimId, 'CLAIM_REJECTED', `rejected at ${rejectedAt}${why ? `: ${why}` : ''}`)
+  return { success: true, claim: updated }
+}
+
+/** Undoes a rejection, back to review, so a mistaken click isn't final. */
+export async function reopenClaim(claimId: string): Promise<ApproveResult> {
+  const claim = await repo.getClaim(claimId)
+  if (!claim) return { success: false, reason: `No claim found with id ${claimId}.` }
+  if (claim.status !== 'rejected') return { success: false, reason: 'Only a rejected claim can be reopened.' }
+
+  await repo.updateClaim(claimId, { status: 'review', rejectedAt: null, rejectionReason: null })
+  const updated = await repo.getClaim(claimId)
+  if (!updated) return { success: false, reason: 'Claim was updated but could not be re-read afterward.' }
+  await appendAuditEntry(claimId, 'CLAIM_REOPENED', 'rejection undone; back to review')
   return { success: true, claim: updated }
 }

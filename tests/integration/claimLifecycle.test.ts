@@ -15,7 +15,7 @@ const { resetDb } = await import('../helpers/testDb')
 const repo = await import('../../src/modules/storage/repository')
 const { ingestReceipt } = await import('../../src/agents/ingestion/ingestReceipt')
 const { populateClaim } = await import('../../src/agents/sheet/populateClaim')
-const { editClaim, approveClaim } = await import('../../src/agents/review/reviewClaim')
+const { editClaim, approveClaim, rejectClaim, reopenClaim } = await import('../../src/agents/review/reviewClaim')
 const { buildApprovedClaimsWorkbook, buildClaimsWorkbook } = await import('../../src/agents/export/exportClaims')
 const { submitReport } = await import('../../src/agents/review/submitReport')
 const { verifyAuditChain } = await import('../../src/modules/audit/auditLog')
@@ -171,6 +171,51 @@ describe('Review & Submit Agent', () => {
     await approveClaim(claim.claimId)
     await expect(editClaim(claim.claimId, { amount: 1 })).rejects.toThrow(/already approved/)
     expect((await repo.getClaim(claim.claimId))?.amount).toBe(40)
+  })
+})
+
+describe('Rejecting a claim', () => {
+  it('records the reason, locks the claim, and logs it', async () => {
+    const c = await ingestAndBuild(png('lunch.png'))
+    const r = await rejectClaim(c.claimId, '  personal expense ')
+    expect(r).toMatchObject({ success: true, claim: { status: 'rejected', rejectionReason: 'personal expense' } })
+    expect((await repo.getClaim(c.claimId))?.rejectedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(await approveClaim(c.claimId)).toMatchObject({ success: false })
+    await expect(editClaim(c.claimId, { amount: 1 })).rejects.toThrow(/rejected/)
+    expect(await rejectClaim(c.claimId, '')).toMatchObject({ success: false })
+    const log = await repo.listAuditLogs()
+    expect(log.at(-1)).toMatchObject({ action: 'CLAIM_REJECTED' })
+    expect(log.at(-1)?.detail).toContain('personal expense')
+    expect(await verifyAuditChain()).toMatchObject({ valid: true })
+  })
+
+  it('cannot reject an approved claim', async () => {
+    const c = await ingestAndBuild(png('lunch.png'))
+    await approveClaim(c.claimId)
+    expect(await rejectClaim(c.claimId, 'no')).toMatchObject({ success: false })
+  })
+
+  it('reopens a rejected claim back to review, clearing the reason', async () => {
+    const c = await ingestAndBuild(png('lunch.png'))
+    await rejectClaim(c.claimId, 'wrong trip')
+    expect(await reopenClaim(c.claimId)).toMatchObject({ success: true, claim: { status: 'review' } })
+    const after = await repo.getClaim(c.claimId)
+    expect(after?.rejectionReason ?? null).toBeNull()
+    expect(after?.rejectedAt ?? null).toBeNull()
+    expect(await approveClaim(c.claimId)).toMatchObject({ success: true })
+    expect(await reopenClaim(c.claimId)).toMatchObject({ success: false })
+  })
+
+  it('lists a rejected claim, with its reason, in the not-approved download', async () => {
+    const c = await ingestAndBuild(png('lunch.png'))
+    await rejectClaim(c.claimId, 'duplicate of paper receipt')
+    const built = await buildClaimsWorkbook('pending')
+    if (!built.success) throw new Error(built.reason)
+    const wb = XLSX.read(XLSX.write(built.workbook, { type: 'array', bookType: 'xlsx' }))
+    expect(XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets['Not Approved Claims'])[0]).toMatchObject({
+      Status: 'rejected',
+      'Rejection Reason': 'duplicate of paper receipt',
+    })
   })
 })
 

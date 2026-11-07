@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS claims (
   policy_reason_code      TEXT,
   duplicate_of_claim_id   TEXT REFERENCES claims(claim_id),
   line_item_review_reason TEXT,
-  status                  TEXT NOT NULL CHECK (status IN ('draft','review','approved')),
+  status                  TEXT NOT NULL CHECK (status IN ('draft','review','approved','rejected')),
   created_at              TIMESTAMPTZ NOT NULL,
   approved_at             TIMESTAMPTZ
 );
@@ -79,6 +79,12 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS employee_id TEXT;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS travel_match TEXT;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS line_items JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS report_id TEXT REFERENCES claim_reports(report_id);
+-- Added 2026-11-07: a reviewer can reject a claim. A database made before
+-- then has the old three-status check, so it's replaced.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_status_check;
+ALTER TABLE claims ADD CONSTRAINT claims_status_check CHECK (status IN ('draft','review','approved','rejected'));
 CREATE INDEX IF NOT EXISTS idx_claims_receipt ON claims(receipt_id);
 CREATE INDEX IF NOT EXISTS idx_claims_employee ON claims(employee_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
@@ -157,6 +163,7 @@ export const TABLES = {
       ['policy_reason_code', 'policyReasonCode'], ['duplicate_of_claim_id', 'duplicateOfClaimId'],
       ['line_item_review_reason', 'lineItemReviewReason'], ['status', 'status'], ['report_id', 'reportId'],
       ['created_at', 'createdAt', 'timestamptz'], ['approved_at', 'approvedAt', 'timestamptz'],
+      ['rejected_at', 'rejectedAt', 'timestamptz'], ['rejection_reason', 'rejectionReason'],
     ],
   },
   claimReports: {
