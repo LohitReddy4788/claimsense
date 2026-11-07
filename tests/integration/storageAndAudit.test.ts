@@ -158,3 +158,22 @@ describe('Read-only SQL console guard', () => {
     }
   })
 })
+
+describe('Admin PIN (admin portal sign-in)', () => {
+  it('is set once, stored only as a salted hash, and checked on this device', async () => {
+    const { hasAdminPin, setAdminPin, checkAdminPin } = await import('../../src/modules/auth/adminPin')
+    expect(await hasAdminPin()).toBe(false)
+    expect(await checkAdminPin('1234')).toBe(false)
+    expect(await setAdminPin('12')).toMatchObject({ success: false })
+    expect(await setAdminPin('4826')).toEqual({ success: true })
+    expect(await setAdminPin('9999')).toMatchObject({ success: false }) // can't be overwritten from the sign-in screen
+
+    const stored = await repo.getMeta('admin_pin')
+    expect(stored).not.toContain('4826')
+    expect(JSON.parse(stored!)).toMatchObject({ salt: expect.stringMatching(/^[0-9a-f]{32}$/), hash: expect.stringMatching(/^[0-9a-f]{64}$/) })
+
+    expect(await checkAdminPin('4826')).toBe(true)
+    expect(await checkAdminPin('4827')).toBe(false)
+    expect((await repo.listAuditLogs()).at(-1)).toMatchObject({ action: 'ADMIN_PIN_SET' })
+  })
+})

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Plane, CircleAlert, MapPin, CalendarPlus, CheckCircle2, Clock, XCircle } from 'lucide-react'
+import { Plane, CircleAlert, MapPin, CalendarPlus, CheckCircle2, Clock, XCircle, Check, X } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { generateId } from '../utils/id'
+import { requestTravel, decideTravelRequest } from '../agents/travel/decideTravelRequest'
 import { LoadingState, errorText } from './LoadingState'
 import type { TravelRequestRecord } from '../types/records'
 
@@ -11,9 +12,25 @@ const STATUS_ICONS: Record<TravelRequestRecord['approvalStatus'], typeof CheckCi
   rejected: XCircle,
 }
 
-export function TravelRequestsPanel() {
+const STATUS_STYLE: Record<TravelRequestRecord['approvalStatus'], string> = {
+  approved: 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300',
+  pending: 'border-amber-400/50 bg-amber-400/10 text-amber-300',
+  rejected: 'border-red-400/50 bg-red-400/10 text-red-300',
+}
+
+interface TravelRequestsPanelProps {
+  /** Employee: request trips (pending until decided) and see their own.
+   * Admin: approve or reject everyone's, or add an approved trip directly. */
+  portal: 'employee' | 'admin'
+  /** The signed-in employee (employee portal only). */
+  employeeId?: string
+}
+
+export function TravelRequestsPanel({ portal, employeeId: me = '' }: TravelRequestsPanelProps) {
+  const isAdmin = portal === 'admin'
   const [requests, setRequests] = useState<TravelRequestRecord[]>([])
   const [employeeId, setEmployeeId] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
   const [destination, setDestination] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -40,7 +57,35 @@ export function TravelRequestsPanel() {
     refresh()
   }, [])
 
+  async function decide(r: TravelRequestRecord, decision: 'approved' | 'rejected') {
+    try {
+      const result = await decideTravelRequest(r.requestId, decision)
+      setNotice(
+        result.success
+          ? `${r.employeeId}'s trip to ${r.destination} ${decision}.${result.rematched ? ` ${result.rematched} of their receipt(s) re-matched to it.` : ''}`
+          : result.reason,
+      )
+    } catch (err) {
+      setNotice(`Could not update the trip: ${errorText(err)}`)
+    }
+    await refresh()
+  }
+
   async function addRequest() {
+    if (!isAdmin) {
+      const result = await requestTravel({ employeeId: me, destination, startDate, endDate })
+      if (!result.success) {
+        setDateError(result.reason)
+        return
+      }
+      setDateError(null)
+      setNotice(`Trip to ${result.request.destination} requested. It's pending until your admin approves it.`)
+      setDestination('')
+      setStartDate('')
+      setEndDate('')
+      await refresh()
+      return
+    }
     if (!employeeId.trim() || !destination.trim() || !startDate || !endDate) return
     // Found live: nothing stopped an end date before the start date. Not a
     // crash — reconcileTravel's date-range check (receiptDate >= start &&
@@ -54,7 +99,7 @@ export function TravelRequestsPanel() {
     setDateError(null)
     const record: TravelRequestRecord = {
       requestId: generateId('trv'),
-      employeeId: employeeId.trim(),
+      employeeId: employeeId.trim().toUpperCase(),
       destination: destination.trim(),
       startDate,
       endDate,
@@ -68,6 +113,11 @@ export function TravelRequestsPanel() {
     await refresh()
   }
 
+  const visible = isAdmin
+    ? [...requests].sort((a, b) => Number(b.approvalStatus === 'pending') - Number(a.approvalStatus === 'pending'))
+    : requests.filter((r) => r.employeeId.trim().toUpperCase() === me.trim().toUpperCase())
+  const pendingCount = requests.filter((r) => r.approvalStatus === 'pending').length
+
   return (
     <div>
       <section className="rounded-2xl border border-white/15 p-5">
@@ -75,10 +125,18 @@ export function TravelRequestsPanel() {
           <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-white/40">
             <CalendarPlus className="h-4 w-4 text-white" strokeWidth={1.75} />
           </div>
-          <p className="text-sm font-semibold text-white">Add an approved trip</p>
+          <div>
+            <p className="text-sm font-semibold text-white">{isAdmin ? 'Add a trip directly' : 'Request a trip'}</p>
+            <p className="text-xs text-white/50">
+              {isAdmin
+                ? 'Employees request trips themselves; use this only to record one for them.'
+                : 'Your admin approves it. Receipts from an approved trip are linked to it automatically.'}
+            </p>
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-white/10 pt-4">
+          {isAdmin && (
           <div>
             <label className="block text-xs text-white/50">Employee ID</label>
             <input
@@ -88,6 +146,7 @@ export function TravelRequestsPanel() {
               onChange={(e) => setEmployeeId(e.target.value)}
             />
           </div>
+          )}
           <div>
             <label className="block text-xs text-white/50">Destination</label>
             <input
@@ -115,6 +174,7 @@ export function TravelRequestsPanel() {
               onChange={(e) => setEndDate(e.target.value)}
             />
           </div>
+          {isAdmin && (
           <div>
             <label className="block text-xs text-white/50">Status</label>
             <select
@@ -129,15 +189,17 @@ export function TravelRequestsPanel() {
               <option value="rejected">rejected</option>
             </select>
           </div>
+          )}
           <button
             type="button"
             onClick={addRequest}
             className="inline-flex items-center gap-1.5 rounded-lg border border-white bg-white px-3.5 py-1.5 text-sm font-medium text-black transition-colors hover:bg-white/90"
           >
             <Plane className="h-4 w-4" strokeWidth={1.75} />
-            Add request
+            {isAdmin ? 'Add trip' : 'Send request'}
           </button>
         </div>
+        {notice && <p className="mt-2 text-xs text-white/70">{notice}</p>}
         {dateError && (
           <p className="mt-2 flex items-center gap-1.5 text-xs text-white">
             <CircleAlert className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -148,18 +210,19 @@ export function TravelRequestsPanel() {
 
       <div className="mt-6">
         <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
-          Travel requests ({loaded ? requests.length : '…'})
+          {isAdmin ? 'Travel requests' : 'My travel requests'} ({loaded ? visible.length : '…'})
+          {isAdmin && pendingCount > 0 && <span className="ml-2 normal-case text-amber-300">· {pendingCount} waiting for you</span>}
         </p>
         {!loaded ? (
           <LoadingState error={loadError} />
-        ) : requests.length === 0 ? (
+        ) : visible.length === 0 ? (
           <div className="mt-3 flex flex-col items-center gap-2 rounded-2xl border border-white/15 py-12 text-center">
             <Plane className="h-8 w-8 text-white/25" strokeWidth={1.5} />
             <p className="text-sm text-white/50">No travel requests yet.</p>
           </div>
         ) : (
           <ul className="mt-3 space-y-2">
-            {requests.map((r) => {
+            {visible.map((r) => {
               const StatusIcon = STATUS_ICONS[r.approvalStatus]
               return (
                 <li
@@ -179,9 +242,31 @@ export function TravelRequestsPanel() {
                       </p>
                     </div>
                   </div>
-                  <span className="inline-flex flex-none items-center gap-1 rounded-full border border-white/25 px-2.5 py-1 text-xs font-medium text-white/80">
-                    <StatusIcon className="h-3 w-3" strokeWidth={1.75} />
-                    {r.approvalStatus}
+                  <span className="flex flex-none flex-wrap items-center justify-end gap-2">
+                    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS_STYLE[r.approvalStatus]}`}>
+                      <StatusIcon className="h-3 w-3" strokeWidth={1.75} />
+                      {r.approvalStatus}
+                    </span>
+                    {isAdmin && r.approvalStatus !== 'approved' && (
+                      <button
+                        type="button"
+                        onClick={() => decide(r, 'approved')}
+                        className="inline-flex items-center gap-1 rounded-md border border-white bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-white/90"
+                      >
+                        <Check className="h-3 w-3" strokeWidth={2.25} />
+                        Approve
+                      </button>
+                    )}
+                    {isAdmin && r.approvalStatus !== 'rejected' && (
+                      <button
+                        type="button"
+                        onClick={() => decide(r, 'rejected')}
+                        className="inline-flex items-center gap-1 rounded-md border border-red-400/60 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-400/10"
+                      >
+                        <X className="h-3 w-3" strokeWidth={2.25} />
+                        Reject
+                      </button>
+                    )}
                   </span>
                 </li>
               )

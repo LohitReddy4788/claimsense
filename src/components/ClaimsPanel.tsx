@@ -52,6 +52,17 @@ const TRIP_BADGE = {
 
 const BADGE = 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium'
 
+const sameEmployee = (a: string | null | undefined, b: string) => !!a && a.trim().toUpperCase() === b.trim().toUpperCase()
+
+type AdminFilter = 'submitted' | 'approved' | 'rejected' | 'open' | 'all'
+const ADMIN_FILTERS: { id: AdminFilter; label: string; match: (c: ClaimRecord) => boolean }[] = [
+  { id: 'submitted', label: 'Waiting for approval', match: (c) => c.status === 'submitted' },
+  { id: 'approved', label: 'Approved', match: (c) => c.status === 'approved' },
+  { id: 'rejected', label: 'Rejected', match: (c) => c.status === 'rejected' },
+  { id: 'open', label: 'Not submitted yet', match: (c) => c.status === 'draft' || c.status === 'review' },
+  { id: 'all', label: 'All', match: () => true },
+]
+
 interface ClaimsPanelProps {
   /** Panels stay mounted for the whole session (Phase 5's fix) — without
    * this, a claim created in Upload Receipts after this panel first
@@ -60,9 +71,16 @@ interface ClaimsPanelProps {
    * it here proactively instead of waiting to hit it a third time.
    * Re-fetches every time this tab becomes the active one. */
   active: boolean
+  /** Employee: their own claims, which they correct and submit. Admin:
+   * everyone's, read-only, to approve or reject what was submitted. */
+  portal: 'employee' | 'admin'
+  /** The signed-in employee (employee portal only). */
+  employeeId?: string
 }
 
-export function ClaimsPanel({ active }: ClaimsPanelProps) {
+export function ClaimsPanel({ active, portal, employeeId = '' }: ClaimsPanelProps) {
+  const isAdmin = portal === 'admin'
+  const [filter, setFilter] = useState<AdminFilter>('submitted')
   const [claims, setClaims] = useState<ClaimRecord[]>([])
   const [receiptsById, setReceiptsById] = useState<Record<string, ReceiptRecord>>({})
   const [edits, setEdits] = useState<Record<string, EditBuffer>>({})
@@ -166,8 +184,6 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
     const claimId = claim.claimId
     // Found in the pre-submission audit: approving straight after typing a
     // correction used to approve the old values and silently drop the edit.
-    const buf = edits[claimId]
-    if (buf && isDirty(claim, buf) && !(await handleSave(claimId))) return
     try {
       const result = await approveClaim(claimId)
       setMessage((m) => ({
@@ -203,7 +219,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
   async function handleReopen(claimId: string) {
     try {
       const result = await reopenClaim(claimId)
-      setMessage((m) => ({ ...m, [claimId]: result.success ? 'Reopened for review.' : `Could not reopen: ${result.reason}` }))
+      setMessage((m) => ({ ...m, [claimId]: result.success ? 'Sent back to the employee.' : `Could not reopen: ${result.reason}` }))
       await refresh()
     } catch (err) {
       setMessage((m) => ({ ...m, [claimId]: `Could not reopen: ${errorText(err)}` }))
@@ -212,21 +228,32 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
 
   async function handleSubmitReport(employeeId: string) {
     setSubmitting(employeeId)
+    // Unsaved corrections are saved first, so what's submitted is what the
+    // employee sees on screen.
+    for (const c of readyForReport(claims, employeeId)) {
+      const buf = edits[c.claimId]
+      if (buf && isDirty(c, buf) && !(await handleSave(c.claimId))) {
+        setReportMessage(`⚠ Could not save your change to ${receiptsById[c.receiptId]?.fileName ?? c.claimId}; nothing was submitted.`)
+        setSubmitting(null)
+        return
+      }
+    }
     const result = await submitReport(employeeId)
     setReportMessage(
       result.success
-        ? `✓ Submitted ${result.report.reportId}: ${result.report.claimCount} claim(s) for ${result.report.employeeId}`
+        ? `✓ Submitted ${result.report.reportId}: ${result.report.claimCount} claim(s), ${formatTotals(result.report.totals)}. Your admin will approve or reject each one.`
         : `⚠ ${result.reason}`,
     )
     setSubmitting(null)
     await refresh()
   }
 
-  // Employees with approved claims not yet in a report, each with what a
-  // report would contain right now.
-  const readyEmployees = [...new Set(claims.filter((c) => c.employeeId).map((c) => c.employeeId!.trim().toUpperCase()))]
-    .map((employeeId) => ({ employeeId, ready: readyForReport(claims, employeeId) }))
-    .filter((e) => e.ready.length > 0)
+  // The employee's claims built but not yet submitted, i.e. what one click
+  // on Submit would send.
+  const ready = isAdmin ? [] : readyForReport(claims, employeeId)
+  const myClaims = isAdmin ? claims : claims.filter((c) => sameEmployee(c.employeeId, employeeId))
+  const myReports = isAdmin ? reports : reports.filter((r) => sameEmployee(r.employeeId, employeeId))
+  const shown = isAdmin ? myClaims.filter(ADMIN_FILTERS.find((f) => f.id === filter)!.match) : myClaims
   const formatTotals = (totals: Record<string, number>) =>
     Object.entries(totals)
       .map(([currency, amount]) => `${amount.toFixed(2)} ${currency}`)
@@ -246,6 +273,13 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
     }
   }
   const approvedCount = claims.filter((c) => c.status === 'approved').length
+  // A report's progress: how many of its claims the admin has decided.
+  const reportProgress = (reportId: string) => {
+    const inReport = claims.filter((c) => c.reportId === reportId)
+    const approved = inReport.filter((c) => c.status === 'approved').length
+    const rejected = inReport.filter((c) => c.status === 'rejected').length
+    return { approved, rejected, waiting: inReport.filter((c) => c.status === 'submitted').length }
+  }
   const exportOptions: { scope: ExportScope; label: string; count: number }[] = [
     { scope: 'approved', label: 'Approved', count: approvedCount },
     { scope: 'pending', label: 'Not approved', count: claims.length - approvedCount },
@@ -256,8 +290,9 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
-          Claims ({loaded ? claims.length : '…'})
+          {isAdmin ? 'All claims' : 'My claims'} ({loaded ? myClaims.length : '…'})
         </p>
+        {isAdmin && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="flex items-center gap-1.5 text-xs text-white/50">
             <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -279,73 +314,115 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
             ))}
           </div>
         </div>
+        )}
       </div>
       {exportMessage && <p className="mt-2 text-xs text-white/60">{exportMessage}</p>}
 
-      {loaded && (readyEmployees.length > 0 || reports.length > 0 || reportMessage) && (
+      {loaded && (ready.length > 0 || myReports.length > 0 || reportMessage) && (
         <section className="mt-4 rounded-2xl border border-white/20 p-4">
           <p className="flex items-center gap-1.5 text-sm font-medium text-white">
             <FolderCheck className="h-4 w-4" strokeWidth={1.75} />
             Expense reports
           </p>
           <p className="mt-0.5 text-xs text-white/50">
-            Approve each receipt below, then submit them together as one expense claim.
+            {isAdmin
+              ? 'What each employee submitted, and how much of it you have decided.'
+              : 'Check each receipt below and correct anything that was read wrong, then submit them together in one click.'}
           </p>
-          {readyEmployees.map(({ employeeId, ready }) => (
-            <div
-              key={employeeId}
-              className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/15 px-3 py-2.5 text-sm"
-            >
+          {ready.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/15 px-3 py-2.5 text-sm">
               <span className="text-white/80">
-                <span className="font-medium text-white">{employeeId}</span> · {ready.length} approved claim(s)
-                ready · {formatTotals(totalsByCurrency(ready))}
+                <span className="font-medium text-white">{ready.length} claim(s)</span> ready to submit ·{' '}
+                {formatTotals(totalsByCurrency(ready))}
               </span>
               <button
                 type="button"
                 disabled={submitting !== null}
                 onClick={() => handleSubmitReport(employeeId)}
+                title="Sends these claims to the admin; they can't be edited after this"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-white bg-white px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-white/90 disabled:opacity-60"
               >
-                {submitting === employeeId ? (
+                {submitting !== null ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
                 ) : (
                   <Send className="h-3.5 w-3.5" strokeWidth={1.75} />
                 )}
-                Submit expense report
+                Submit for approval
               </button>
             </div>
-          ))}
+          )}
           {reportMessage && <p className="mt-2 text-xs text-white/60">{reportMessage}</p>}
-          {reports.length > 0 && (
+          {myReports.length > 0 && (
             <ul className="mt-3 space-y-1 text-xs text-white/60">
-              {reports.map((r) => (
-                <li key={r.reportId} className="flex flex-wrap gap-x-3">
-                  <span className="font-medium text-white/80">{r.reportId}</span>
-                  <span>{r.employeeId}</span>
-                  <span>{r.claimCount} claim(s)</span>
-                  <span>{formatTotals(r.totals)}</span>
-                  <span>submitted {new Date(r.submittedAt).toLocaleString()}</span>
-                </li>
-              ))}
+              {myReports.map((r) => {
+                const p = reportProgress(r.reportId)
+                return (
+                  <li key={r.reportId} className="flex flex-wrap gap-x-3">
+                    <span className="font-medium text-white/80">{r.reportId}</span>
+                    {isAdmin && <span>{r.employeeId}</span>}
+                    <span>{r.claimCount} claim(s)</span>
+                    <span>{formatTotals(r.totals)}</span>
+                    <span>submitted {new Date(r.submittedAt).toLocaleString()}</span>
+                    <span>
+                      {p.approved} approved · {p.rejected} rejected · {p.waiting} waiting
+                    </span>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>
       )}
+      {isAdmin && loaded && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {ADMIN_FILTERS.map((f) => {
+            const count = claims.filter(f.match).length
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFilter(f.id)}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  filter === f.id ? 'border-white bg-white text-black' : 'border-white/25 text-white/70 hover:border-white/60'
+                }`}
+              >
+                {f.label}
+                <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${filter === f.id ? 'bg-black/10' : 'bg-white/10'}`}>{count}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
       {!loaded ? (
         <LoadingState error={loadError} />
-      ) : claims.length === 0 ? (
+      ) : shown.length === 0 ? (
         <div className="mt-3 flex flex-col items-center gap-2 rounded-2xl border border-white/15 py-12 text-center">
           <Receipt className="h-8 w-8 text-white/25" strokeWidth={1.5} />
-          <p className="text-sm text-white/50">No claims yet — extract a receipt in Upload Receipts first.</p>
+          <p className="text-sm text-white/50">
+            {isAdmin
+              ? filter === 'submitted'
+                ? 'Nothing is waiting for your approval.'
+                : 'No claims here.'
+              : 'No claims yet — upload receipts and click Extract all first.'}
+          </p>
         </div>
       ) : (
         <ul className="mt-3 space-y-4">
-          {claims.map((c) => {
+          {shown.map((c) => {
             const buf = edits[c.claimId] ?? toBuffer(c)
             const receipt = receiptsById[c.receiptId]
             const StatusIcon =
-              c.status === 'approved' ? CheckCircle2 : c.status === 'rejected' ? XCircle : c.status === 'review' ? Clock : FileEdit
-            const locked = c.status === 'approved' || c.status === 'rejected'
+              c.status === 'approved'
+                ? CheckCircle2
+                : c.status === 'rejected'
+                  ? XCircle
+                  : c.status === 'submitted'
+                    ? Send
+                    : c.status === 'review'
+                      ? Clock
+                      : FileEdit
+            // Only the employee corrects a claim, and only before submitting it.
+            const locked = isAdmin || !(c.status === 'draft' || c.status === 'review')
             return (
               <li key={c.claimId} className="rounded-2xl border border-white/15 p-4 text-sm">
                 <div className="flex items-center justify-between gap-2">
@@ -356,13 +433,21 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                         ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300'
                         : c.status === 'rejected'
                           ? 'border-red-400/50 bg-red-400/10 text-red-300'
-                          : 'border-white/30 text-white/80'
+                          : c.status === 'submitted'
+                            ? 'border-sky-400/50 bg-sky-400/10 text-sky-300'
+                            : 'border-white/30 text-white/80'
                     }`}
                   >
                     <StatusIcon className="h-3 w-3" strokeWidth={1.75} />
-                    {c.status}
+                    {c.status === 'submitted' ? 'waiting for approval' : c.status === 'draft' || c.status === 'review' ? (isAdmin ? 'not submitted' : `${c.status} · to check`) : c.status}
                   </span>
                 </div>
+                {isAdmin && c.employeeId && (
+                  <p className="mt-0.5 text-xs text-white/50">
+                    Claimed by {c.employeeId}
+                    {c.reportId && ` · report ${c.reportId}`}
+                  </p>
+                )}
 
                 {c.duplicateOfClaimId && (
                   <p className="mt-1.5 flex items-center gap-1.5 text-xs text-white">
@@ -514,6 +599,23 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                       <Save className="h-3.5 w-3.5" strokeWidth={1.75} />
                       Save changes
                     </button>
+                    {message[c.claimId] && <span className="text-xs text-white/50">{message[c.claimId]}</span>}
+                  </div>
+                )}
+                {!isAdmin && c.status === 'submitted' && (
+                  <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-sky-300">
+                    <Send className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    Submitted in {c.reportId} · waiting for the admin's approval
+                  </p>
+                )}
+                {isAdmin && (c.status === 'draft' || c.status === 'review') && (
+                  <p className="mt-3 flex items-center gap-1.5 text-xs text-white/50">
+                    <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    The employee hasn't checked and submitted this yet.
+                  </p>
+                )}
+                {isAdmin && c.status === 'submitted' && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleApprove(c)}
@@ -578,14 +680,16 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                       Rejected {c.rejectedAt && new Date(c.rejectedAt).toLocaleString()}
                       {c.rejectionReason && <span className="font-normal text-red-200/90">· {c.rejectionReason}</span>}
                     </p>
+                    {isAdmin && (
                     <button
                       type="button"
                       onClick={() => handleReopen(c.claimId)}
                       className="inline-flex items-center gap-1 rounded-md border border-white/30 px-2.5 py-1 font-medium text-white transition-colors hover:border-white hover:bg-white/5"
                     >
                       <RotateCcw className="h-3 w-3" strokeWidth={2} />
-                      Reopen
+                      Send back to employee
                     </button>
+                    )}
                     {message[c.claimId] && <span className="text-white/50">{message[c.claimId]}</span>}
                   </div>
                 )}
@@ -593,7 +697,7 @@ export function ClaimsPanel({ active }: ClaimsPanelProps) {
                   <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-white">
                     <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
                     Approved {c.approvedAt && new Date(c.approvedAt).toLocaleString()}
-                    {c.reportId ? ` · submitted in ${c.reportId}` : ' · not yet submitted in a report'}
+                    {c.reportId && ` · report ${c.reportId}`}
                   </p>
                 )}
               </li>

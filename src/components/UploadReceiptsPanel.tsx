@@ -45,13 +45,17 @@ interface ExtractState {
   failureReason?: string
 }
 
-export function UploadReceiptsPanel() {
+interface UploadReceiptsPanelProps {
+  /** The signed-in employee: every receipt uploaded here is theirs. */
+  employeeId: string
+}
+
+export function UploadReceiptsPanel({ employeeId }: UploadReceiptsPanelProps) {
   const [receipts, setReceipts] = useState<ReceiptRecord[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({})
   const [extractions, setExtractions] = useState<Record<string, ExtractState>>({})
-  const [employeeId, setEmployeeId] = useState('EMP001')
   // Receipts that already have a claim. Without this, after a reload every
   // receipt showed "Extract" again, and clicking it built a second claim.
   const [claimedIds, setClaimedIds] = useState<Set<string>>(new Set())
@@ -75,7 +79,11 @@ export function UploadReceiptsPanel() {
     let all: ReceiptRecord[]
     try {
       const [receiptList, claims] = await Promise.all([repo.listReceipts(), repo.listClaims()])
-      all = receiptList
+      // Only this employee's receipts: uploaded by them, or (older ones with
+      // no uploader recorded) claimed by them.
+      const me = employeeId.trim().toUpperCase()
+      const claimedByMe = new Set(claims.filter((c) => c.employeeId?.trim().toUpperCase() === me).map((c) => c.receiptId))
+      all = receiptList.filter((r) => (r.employeeId ? r.employeeId === me : claimedByMe.has(r.receiptId)))
       setClaimedIds(new Set(claims.map((c) => c.receiptId)))
     } catch (err) {
       console.error('UploadReceiptsPanel refresh failed:', err)
@@ -205,7 +213,7 @@ export function UploadReceiptsPanel() {
     const rejected: string[] = []
     for (const file of picked) {
       try {
-        const result = await ingestReceipt(file)
+        const result = await ingestReceipt(file, employeeId)
         if (!result.success) {
           rejected.push(picked.length > 1 ? `${file.name}: ${result.reason}` : result.reason)
           continue
@@ -279,18 +287,9 @@ export function UploadReceiptsPanel() {
 
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-white/20 px-4 py-3">
         <User className="h-4 w-4 flex-none text-white/50" strokeWidth={1.75} />
-        <label className="text-sm font-medium text-white/80" htmlFor="employeeId">
-          Claiming as
-        </label>
-        <input
-          id="employeeId"
-          className="w-32 rounded-md border border-white/25 bg-black px-2 py-1 text-sm text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white/40"
-          value={employeeId}
-          onChange={(e) => setEmployeeId(e.target.value)}
-        />
-        <span className="text-xs text-white/40">
-          receipts don't print an employee ID, so this is who the claim is for
-        </span>
+        <span className="text-sm font-medium text-white/80">Claiming as</span>
+        <span className="rounded-md border border-white/25 px-2 py-0.5 text-sm font-semibold text-white">{employeeId}</span>
+        <span className="text-xs text-white/40">your receipts and claims are kept under your employee ID</span>
       </div>
 
       {error && (

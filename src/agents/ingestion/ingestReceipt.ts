@@ -14,7 +14,7 @@ export type IngestResult =
 /** Document Ingestion Agent — validates a receipt file and, only if it
  * passes, registers it (OPFS + a Dexie record). Nothing is written to
  * storage for a rejected file. */
-export async function ingestReceipt(file: File): Promise<IngestResult> {
+export async function ingestReceipt(file: File, employeeId?: string): Promise<IngestResult> {
   if (file.size === 0) {
     return { success: false, reason: 'File is empty.' }
   }
@@ -46,6 +46,7 @@ export async function ingestReceipt(file: File): Promise<IngestResult> {
     fileHash,
     status: 'registered',
     uploadedAt: new Date().toISOString(),
+    ...(employeeId?.trim() ? { employeeId: employeeId.trim().toUpperCase() } : {}),
   }
   await repo.addReceipt(receipt)
   await appendAuditEntry(receiptId, 'RECEIPT_INGESTED', `${file.name} (${kind}, ${fileHash.slice(0, 12)}…)`)

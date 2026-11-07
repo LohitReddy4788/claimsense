@@ -80,6 +80,8 @@ export const updateReceiptStatus = (receiptId: string, status: ReceiptRecord['st
 // Travel requests
 export const listTravelRequests = () => selectAll<TravelRequestRecord>(TABLES.travelRequests, 'ORDER BY start_date')
 export const addTravelRequest = (r: TravelRequestRecord) => insert(TABLES.travelRequests, r)
+export const updateTravelRequest = (requestId: string, patch: Partial<TravelRequestRecord>) =>
+  updateFields(TABLES.travelRequests, requestId, patch)
 
 // Policies
 export const listPolicies = () => selectAll<PolicyRecord>(TABLES.policies, 'ORDER BY category')
@@ -98,8 +100,9 @@ export const updateClaim = (claimId: string, patch: Partial<ClaimRecord>) =>
 export const listReports = () =>
   selectAll<ClaimReportRecord>(TABLES.claimReports, 'ORDER BY submitted_at DESC')
 
-/** Inserts the report and links its claims in ONE transaction, and only
- * claims still approved and not yet in a report: if any of them changed
+/** Inserts the report and links its claims in ONE transaction, marking them
+ * submitted, and only claims the employee still has open (draft or review)
+ * and not yet in a report: if any of them changed
  * since the caller read them (another tab submitted it first), nothing is
  * written and this throws, so a claim can never land in two reports. */
 export async function submitReport(report: ClaimReportRecord, claimIds: string[]): Promise<void> {
@@ -112,14 +115,28 @@ export async function submitReport(report: ClaimReportRecord, claimIds: string[]
       table.cols.map(([, field, kind]) => toParam(kind, (report as unknown as Row)[field])),
     )
     const linked = await tx.query(
-      `UPDATE claims SET report_id = $1
-       WHERE claim_id = ANY($2::text[]) AND status = 'approved' AND report_id IS NULL`,
+      `UPDATE claims SET report_id = $1, status = 'submitted'
+       WHERE claim_id = ANY($2::text[]) AND status IN ('draft', 'review') AND report_id IS NULL`,
       [report.reportId, claimIds],
     )
     if (linked.affectedRows !== claimIds.length) {
       throw new Error('Some of these claims changed or were already submitted. Refresh and try again.')
     }
   })
+}
+
+// Small app settings (key/value), e.g. the admin PIN's salted hash.
+export async function getMeta(key: string): Promise<string | undefined> {
+  const pg = await getPg()
+  const r = await pg.query<{ value: string }>('SELECT value FROM app_meta WHERE key = $1', [key])
+  return r.rows[0]?.value
+}
+export async function putMeta(key: string, value: string): Promise<void> {
+  const pg = await getPg()
+  await pg.query(
+    'INSERT INTO app_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+    [key, value],
+  )
 }
 
 // Audit log

@@ -45,7 +45,7 @@ sent to human review.
 ```bash
 npm run build    # production build (tsc + vite build)
 npm run preview  # serve the production build locally
-npm test         # 187 automated tests (Vitest), about 10 seconds
+npm test         # 198 automated tests (Vitest), about 10 seconds
 npm run lint     # oxlint
 ```
 
@@ -63,6 +63,23 @@ Orchestrator end to end, with its retries, give-up path and AI fallback.
 Only the steps that need a real browser (canvas, Tesseract, the ONNX
 model) are replaced by controllable fakes there; those are covered by
 the in-browser end-to-end runs recorded in `PROJECT_LOG.md`.
+
+## Two portals
+
+The app opens on a sign-in screen with two portals, both checked on this
+device:
+
+- **Employee portal** (employee ID): *Upload Receipts*, *My Claims* (check
+  and correct what was read, then submit everything in one click) and *My
+  Travel Requests* (request a trip; it stays pending until approved).
+- **Admin portal** (PIN, set on first use and stored only as a salted
+  SHA-256 hash in the local database): *Claim Approvals* (approve or reject
+  each submitted claim, with a reason; send a rejected one back), *Travel
+  Approvals* (approving a trip re-matches that employee's open receipts),
+  *Policies*, *Audit Logs* and the *Database*.
+
+A claim goes draft/review → submitted (by the employee) → approved or
+rejected (by the admin). Every step is in the audit trail.
 
 ## What's in here
 

@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { UploadCloud, ShieldCheck, Plane, Receipt, History, Lock, Database, Menu, X } from 'lucide-react'
-import { SECTIONS, type DashboardSection } from '../types/dashboard'
+import { UploadCloud, ShieldCheck, Plane, Receipt, History, Lock, Database, Menu, X, LogOut, UserRound, KeyRound } from 'lucide-react'
+import type { DashboardSection, SectionMeta, Session } from '../types/dashboard'
 
 interface SidebarProps {
+  sections: SectionMeta[]
   active: DashboardSection
   onSelect: (section: DashboardSection) => void
+  session: Session
+  onSignOut: () => void
 }
 
 const SECTION_ICONS: Record<DashboardSection, LucideIcon> = {
@@ -31,10 +34,35 @@ function Brand() {
   )
 }
 
-function NavItems({ active, onSelect }: SidebarProps) {
+function SessionCard({ session, onSignOut }: Pick<SidebarProps, 'session' | 'onSignOut'>) {
+  const isAdmin = session.portal === 'admin'
+  const Icon = isAdmin ? KeyRound : UserRound
+  return (
+    <div className="mx-3 mb-3 flex items-center justify-between gap-2 rounded-xl border border-white/20 px-3 py-2.5">
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon className="h-4 w-4 flex-none text-white/70" strokeWidth={1.75} />
+        <div className="min-w-0">
+          <p className="truncate text-xs font-semibold text-white">{isAdmin ? 'Admin portal' : 'Employee portal'}</p>
+          <p className="truncate text-[11px] text-white/50">{isAdmin ? 'Approvals and policies' : session.employeeId}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onSignOut}
+        title="Sign out"
+        aria-label="Sign out"
+        className="flex-none rounded-md border border-white/20 p-1.5 text-white/60 transition-colors hover:border-white hover:text-white"
+      >
+        <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} />
+      </button>
+    </div>
+  )
+}
+
+function NavItems({ sections, active, onSelect }: Pick<SidebarProps, 'sections' | 'active' | 'onSelect'>) {
   return (
     <div className="flex-1 space-y-0.5 overflow-y-auto px-3 py-1">
-      {SECTIONS.map((section) => {
+      {sections.map((section) => {
         const Icon = SECTION_ICONS[section.id]
         const isActive = active === section.id
         return (
@@ -72,9 +100,9 @@ function PrivacyNote() {
 /** Fixed sidebar from the `md` breakpoint up; below it, a compact top bar
  * whose menu button opens the same navigation as a slide-in drawer, so
  * the content gets the full width of a phone screen. */
-export function Sidebar({ active, onSelect }: SidebarProps) {
+export function Sidebar({ sections, active, onSelect, session, onSignOut }: SidebarProps) {
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const activeLabel = SECTIONS.find((s) => s.id === active)?.label
+  const activeLabel = sections.find((s) => s.id === active)?.label
 
   useEffect(() => {
     if (!drawerOpen) return
@@ -122,7 +150,8 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
                 <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
             </div>
-            <NavItems active={active} onSelect={selectAndClose} />
+            <SessionCard session={session} onSignOut={onSignOut} />
+            <NavItems sections={sections} active={active} onSelect={selectAndClose} />
             <PrivacyNote />
           </nav>
         </div>
@@ -133,7 +162,8 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         <div className="px-5 py-5">
           <Brand />
         </div>
-        <NavItems active={active} onSelect={onSelect} />
+        <SessionCard session={session} onSignOut={onSignOut} />
+        <NavItems sections={sections} active={active} onSelect={onSelect} />
         <PrivacyNote />
       </nav>
     </>

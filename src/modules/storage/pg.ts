@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS claims (
   policy_reason_code      TEXT,
   duplicate_of_claim_id   TEXT REFERENCES claims(claim_id),
   line_item_review_reason TEXT,
-  status                  TEXT NOT NULL CHECK (status IN ('draft','review','approved','rejected')),
+  status                  TEXT NOT NULL CHECK (status IN ('draft','review','submitted','approved','rejected')),
   created_at              TIMESTAMPTZ NOT NULL,
   approved_at             TIMESTAMPTZ
 );
@@ -79,12 +79,14 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS employee_id TEXT;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS travel_match TEXT;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS line_items JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS report_id TEXT REFERENCES claim_reports(report_id);
--- Added 2026-11-07: a reviewer can reject a claim. A database made before
--- then has the old three-status check, so it's replaced.
+-- Added 2026-11-07: a reviewer can reject a claim, and an employee submits
+-- claims for an admin to decide. A database made before then has the old
+-- status check, so it's replaced. Receipts record who uploaded them.
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_status_check;
-ALTER TABLE claims ADD CONSTRAINT claims_status_check CHECK (status IN ('draft','review','approved','rejected'));
+ALTER TABLE claims ADD CONSTRAINT claims_status_check CHECK (status IN ('draft','review','submitted','approved','rejected'));
+ALTER TABLE receipts ADD COLUMN IF NOT EXISTS employee_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_claims_receipt ON claims(receipt_id);
 CREATE INDEX IF NOT EXISTS idx_claims_employee ON claims(employee_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
@@ -130,8 +132,9 @@ export const TABLES = {
     cols: [
       ['receipt_id', 'receiptId'], ['file_name', 'fileName'], ['file_type', 'fileType'],
       ['file_size', 'fileSize', 'int8'], ['opfs_path', 'opfsPath'], ['file_hash', 'fileHash'],
-      ['status', 'status'], ['uploaded_at', 'uploadedAt', 'timestamptz'],
+      ['status', 'status'], ['uploaded_at', 'uploadedAt', 'timestamptz'], ['employee_id', 'employeeId'],
     ],
+    optional: ['employeeId'],
   },
   travelRequests: {
     sql: 'travel_requests', pk: 'request_id', pkField: 'requestId',

@@ -29,6 +29,7 @@ export async function editClaim(claimId: string, patch: Partial<ClaimEditableFie
   if (!before) throw new Error(`No claim found with id ${claimId}.`)
   if (before.status === 'approved') throw new Error('This claim is already approved and can no longer be edited.')
   if (before.status === 'rejected') throw new Error('This claim was rejected; reopen it before editing.')
+  if (before.status === 'submitted') throw new Error('This claim is submitted and waiting for approval, so it can no longer be edited.')
 
   await repo.updateClaim(claimId, patch)
   const fields = Object.entries(patch)
@@ -105,6 +106,10 @@ export async function approveClaim(claimId: string): Promise<ApproveResult> {
   if (claim.status === 'rejected') {
     return { success: false, reason: 'This claim was rejected; reopen it before approving.' }
   }
+  // The admin decides only what the employee has reviewed and submitted.
+  if (claim.status !== 'submitted') {
+    return { success: false, reason: 'The employee has not submitted this claim yet.' }
+  }
 
   const approvedAt = new Date().toISOString()
   await repo.updateClaim(claimId, { status: 'approved', approvedAt })
@@ -129,6 +134,7 @@ export async function rejectClaim(claimId: string, reason: string): Promise<Appr
   if (!claim) return { success: false, reason: `No claim found with id ${claimId}.` }
   if (claim.status === 'approved') return { success: false, reason: 'This claim is already approved.' }
   if (claim.status === 'rejected') return { success: false, reason: 'This claim is already rejected.' }
+  if (claim.status !== 'submitted') return { success: false, reason: 'The employee has not submitted this claim yet.' }
 
   const rejectedAt = new Date().toISOString()
   const why = reason.trim() || null
@@ -139,15 +145,17 @@ export async function rejectClaim(claimId: string, reason: string): Promise<Appr
   return { success: true, claim: updated }
 }
 
-/** Undoes a rejection, back to review, so a mistaken click isn't final. */
+/** Undoes a rejection, back to review and out of its report, so the
+ * employee can correct it and submit it again (or a mistaken click isn't
+ * final). */
 export async function reopenClaim(claimId: string): Promise<ApproveResult> {
   const claim = await repo.getClaim(claimId)
   if (!claim) return { success: false, reason: `No claim found with id ${claimId}.` }
   if (claim.status !== 'rejected') return { success: false, reason: 'Only a rejected claim can be reopened.' }
 
-  await repo.updateClaim(claimId, { status: 'review', rejectedAt: null, rejectionReason: null })
+  await repo.updateClaim(claimId, { status: 'review', rejectedAt: null, rejectionReason: null, reportId: null })
   const updated = await repo.getClaim(claimId)
   if (!updated) return { success: false, reason: 'Claim was updated but could not be re-read afterward.' }
-  await appendAuditEntry(claimId, 'CLAIM_REOPENED', 'rejection undone; back to review')
+  await appendAuditEntry(claimId, 'CLAIM_REOPENED', 'rejection undone; back to the employee for review')
   return { success: true, claim: updated }
 }

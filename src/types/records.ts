@@ -9,6 +9,8 @@ export interface ReceiptRecord {
   fileHash: string
   status: 'registered' | 'processed' | 'rejected'
   uploadedAt: string
+  /** Who uploaded it (the signed-in employee). Absent on older receipts. */
+  employeeId?: string
 }
 
 export interface TravelRequestRecord {
@@ -74,7 +76,10 @@ export interface ClaimRecord {
    * (Name kept from when line items were the only check, to avoid a
    * database column rename.) */
   lineItemReviewReason: string | null
-  status: 'draft' | 'review' | 'approved' | 'rejected'
+  /** draft/review: built and waiting for the employee to check it;
+   * submitted: the employee sent it for approval; approved/rejected: the
+   * admin's decision. */
+  status: 'draft' | 'review' | 'submitted' | 'approved' | 'rejected'
   /** Set when a reviewer rejects the claim; cleared if it's reopened. */
   rejectedAt?: string | null
   rejectionReason?: string | null
