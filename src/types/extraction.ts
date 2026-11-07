@@ -62,6 +62,14 @@ export interface PolicyRuleCandidate {
   writtenAs?: string
 }
 
+/** A currency rate found in a policy document: 1 `currency` = `rate`
+ * `toCurrency`. */
+export interface PolicyRateCandidate {
+  currency: string
+  rate: number
+  toCurrency: string
+}
+
 export type PolicyExtractionResult =
   | {
       success: true

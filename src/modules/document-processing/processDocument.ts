@@ -131,6 +131,40 @@ export async function processDocument(file: File, kind: DetectedFileKind): Promi
   return kind === 'pdf' ? processPdf(file) : processImage(file)
 }
 
+/** The PDF's own text layer, line by line, for up to `maxPages` pages.
+ * Exact where it exists (a PDF made by a word processor); a scanned PDF
+ * has none and returns an empty string. Never throws. */
+export async function readPdfText(file: File, maxPages: number): Promise<string> {
+  try {
+    const doc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise
+    const lines: string[] = []
+    for (let pageNum = 1; pageNum <= Math.min(doc.numPages, maxPages); pageNum++) {
+      const content = await (await doc.getPage(pageNum)).getTextContent()
+      let current = ''
+      let lastY: number | null = null
+      for (const item of content.items) {
+        if (!('str' in item)) continue
+        const y = item.transform[5]
+        if (lastY !== null && Math.abs(y - lastY) > 2) {
+          lines.push(current)
+          current = ''
+        }
+        current += (current && !current.endsWith(' ') && item.str && !item.str.startsWith(' ') ? ' ' : '') + item.str
+        lastY = y
+        if (item.hasEOL) {
+          lines.push(current)
+          current = ''
+          lastY = null
+        }
+      }
+      if (current) lines.push(current)
+    }
+    return lines.join('\n')
+  } catch {
+    return ''
+  }
+}
+
 export type MultiPageResult =
   | { success: true; pages: Blob[]; totalPageCount: number; pagesRendered: number }
   | { success: false; reason: string }

@@ -45,7 +45,7 @@ sent to human review.
 ```bash
 npm run build    # production build (tsc + vite build)
 npm run preview  # serve the production build locally
-npm test         # 180 automated tests (Vitest), about 10 seconds
+npm test         # 187 automated tests (Vitest), about 10 seconds
 npm run lint     # oxlint
 ```
 
@@ -71,8 +71,9 @@ the in-browser end-to-end runs recorded in `PROJECT_LOG.md`.
   the Orchestrator: vendor/amount/date/currency/line items via OCR first,
   on-device AI as fallback.
 - **Policies** — company spending limits per category, a local currency
-  conversion table, and PDF-based policy import (suggestions only, never
-  auto-saved).
+  conversion table, and policy-PDF import: limits and currency rates are
+  read from the PDF's text, OCR for a scanned PDF, or the on-device AI as
+  a last resort, and offered as suggestions (never auto-saved).
 - **Travel Requests** — approved trips a receipt can be reconciled against.
 - **Claims** — each built claim with its policy result (line items are
   checked against their own category's limit too), the employee, and

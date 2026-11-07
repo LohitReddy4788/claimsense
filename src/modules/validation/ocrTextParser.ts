@@ -239,6 +239,23 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
   ]).finally(() => clearTimeout(timer))
 }
 
+/** Plain OCR text of an image (used by the policy-PDF import for scanned
+ * policies). Throws on failure; the caller falls back to the AI. */
+export async function ocrImageText(imageBlob: Blob): Promise<string> {
+  try {
+    const worker = await withTimeout(getTesseractWorker(), OCR_INIT_TIMEOUT_MS, 'OCR engine start')
+    const result = await withTimeout(worker.recognize(imageBlob), OCR_RECOGNIZE_TIMEOUT_MS, 'OCR read')
+    return result.data.text
+  } catch (e) {
+    if (workerPromise) {
+      const broken = workerPromise
+      workerPromise = null
+      broken.then((w) => w.terminate()).catch(() => {})
+    }
+    throw e
+  }
+}
+
 /** OCR fallback (Validation module) — runs when the VLM extraction failed
  * or scored low confidence. Never throws: an OCR failure becomes
  * success:false with a reason, same contract as the VLM path, so callers

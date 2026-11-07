@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Coins,
   FileUp,
@@ -13,10 +13,16 @@ import {
 import * as repo from '../modules/storage/repository'
 import { generateId } from '../utils/id'
 import type { PolicyRecord, PolicySettingsRecord } from '../types/records'
-import { extractPolicyFromPdf, MAX_POLICY_PDF_PAGES } from '../agents/policy-import/extractPolicyFromPdf'
+import { extractPolicyFromPdf, MAX_POLICY_PDF_PAGES, type PolicyReadMethod } from '../agents/policy-import/extractPolicyFromPdf'
 import { EXPENSE_CATEGORIES } from '../types/category'
 import { LoadingState, errorText } from './LoadingState'
-import type { PolicyRuleCandidate } from '../types/extraction'
+import type { PolicyRateCandidate, PolicyRuleCandidate } from '../types/extraction'
+
+const METHOD_LABEL: Record<PolicyReadMethod, string> = {
+  text: "the PDF's own text",
+  ocr: 'OCR',
+  ai: 'the on-device AI',
+}
 
 const DEFAULT_SETTINGS: PolicySettingsRecord = {
   id: 'default',
@@ -48,11 +54,17 @@ export function PoliciesPanel() {
   // moves one row across, one row at a time, on an explicit click.
   const [importStatus, setImportStatus] = useState<
     | { phase: 'idle' }
-    | { phase: 'reading'; pageNumber: number; pagesToRead: number }
+    | { phase: 'reading'; pageNumber: number; pagesToRead: number; method: PolicyReadMethod | null }
     | { phase: 'error'; reason: string }
-    | { phase: 'done'; pagesRead: number; totalPageCount: number }
+    | { phase: 'done'; pagesRead: number; totalPageCount: number; method: PolicyReadMethod; rules: number; rates: number }
   >({ phase: 'idle' })
   const [suggestions, setSuggestions] = useState<PolicyRuleCandidate[]>([])
+  const [rateSuggestions, setRateSuggestions] = useState<PolicyRateCandidate[]>([])
+  // Suggestions whose Add is already saving. Found in testing: a quick
+  // second click landed before the row disappeared and saved the same
+  // limit twice. Checked synchronously, so even two clicks in one frame
+  // save once.
+  const saving = useRef(new Set<object>())
 
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -142,16 +154,44 @@ export function PoliciesPanel() {
 
   async function handlePolicyPdf(file: File) {
     setSuggestions([])
-    setImportStatus({ phase: 'reading', pageNumber: 0, pagesToRead: 0 })
-    const result = await extractPolicyFromPdf(file, ({ pageNumber, pagesToRead }) =>
-      setImportStatus({ phase: 'reading', pageNumber, pagesToRead }),
+    setRateSuggestions([])
+    setImportStatus({ phase: 'reading', pageNumber: 0, pagesToRead: 0, method: null })
+    const result = await extractPolicyFromPdf(file, ({ pageNumber, pagesToRead, method }) =>
+      setImportStatus({ phase: 'reading', pageNumber, pagesToRead, method }),
     )
     if (!result.success) {
       setImportStatus({ phase: 'error', reason: result.reason })
       return
     }
     setSuggestions(result.candidates)
-    setImportStatus({ phase: 'done', pagesRead: result.pagesRead, totalPageCount: result.totalPageCount })
+    setRateSuggestions(result.rates)
+    setImportStatus({
+      phase: 'done',
+      pagesRead: result.pagesRead,
+      totalPageCount: result.totalPageCount,
+      method: result.method,
+      rules: result.candidates.length,
+      rates: result.rates.length,
+    })
+  }
+
+  // Same rule as limits: a rate from the PDF is only saved on a click.
+  async function addRateSuggestion(candidate: PolicyRateCandidate) {
+    if (saving.current.has(candidate)) return
+    saving.current.add(candidate)
+    setRateSuggestions((prev) => prev.filter((c) => c !== candidate))
+    try {
+      const stored = await currentSettings()
+      const updated: PolicySettingsRecord = { ...stored, rates: { ...stored.rates, [candidate.currency]: candidate.rate } }
+      await repo.putPolicySettings(updated)
+      setSettings(updated)
+    } catch (err) {
+      console.error('Saving the imported rate failed:', err)
+      setRateSuggestions((prev) => [...prev, candidate])
+      setRateError(`Could not save the ${candidate.currency} rate: ${errorText(err)}`)
+    } finally {
+      saving.current.delete(candidate)
+    }
   }
 
   // The only place a policy-import suggestion ever becomes a real rule —
@@ -161,13 +201,23 @@ export function PoliciesPanel() {
   // policy limit has no downstream review to catch it the way a wrong
   // receipt field does.
   async function addSuggestion(candidate: PolicyRuleCandidate) {
+    if (saving.current.has(candidate)) return
+    saving.current.add(candidate)
+    setSuggestions((prev) => prev.filter((c) => c !== candidate))
     const record: PolicyRecord = {
       policyId: generateId('pol'),
       category: candidate.category,
       limitAmount: candidate.limitAmount,
     }
-    await repo.addPolicy(record)
-    setSuggestions((prev) => prev.filter((c) => c !== candidate))
+    try {
+      await repo.addPolicy(record)
+    } catch (err) {
+      console.error('Saving the imported limit failed:', err)
+      setSuggestions((prev) => [...prev, candidate])
+      setPolicyError(`Could not save the ${candidate.category} limit: ${errorText(err)}`)
+    } finally {
+      saving.current.delete(candidate)
+    }
     await refresh()
   }
 
@@ -253,8 +303,8 @@ export function PoliciesPanel() {
           <div>
             <p className="text-sm font-semibold text-white">Import limits from a policy PDF</p>
             <p className="text-xs text-white/50">
-              Reads up to {MAX_POLICY_PDF_PAGES} pages on-device — nothing is saved until you click Add on a
-              specific row.
+              Reads limits and currency rates from up to {MAX_POLICY_PDF_PAGES} pages on-device (the PDF's text,
+              then OCR, then the AI) — nothing is saved until you click Add on a specific row.
             </p>
           </div>
         </div>
@@ -278,9 +328,11 @@ export function PoliciesPanel() {
         {importStatus.phase === 'reading' && (
           <p className="mt-3 flex items-center gap-1.5 text-sm text-white/60">
             <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
-            {importStatus.pagesToRead > 0
-              ? `Reading page ${importStatus.pageNumber} of ${importStatus.pagesToRead}… this can take several minutes per page on-device.`
-              : 'Rendering PDF pages…'}
+            {importStatus.method === 'ai'
+              ? `No limits found in the text, so the on-device AI is reading page ${importStatus.pageNumber} of ${importStatus.pagesToRead}… this can take several minutes per page.`
+              : importStatus.method === 'ocr'
+                ? `Reading page ${importStatus.pageNumber} of ${importStatus.pagesToRead} with OCR…`
+                : 'Reading the PDF…'}
           </p>
         )}
         {importStatus.phase === 'error' && (
@@ -293,9 +345,12 @@ export function PoliciesPanel() {
           <p className="mt-3 text-sm text-white/60">
             Read {importStatus.pagesRead} of {importStatus.totalPageCount} page
             {importStatus.totalPageCount === 1 ? '' : 's'}.{' '}
-            {suggestions.length === 0
+            {importStatus.rules === 0
               ? 'No spending limits found.'
-              : `Found ${suggestions.length} candidate rule${suggestions.length === 1 ? '' : 's'} below.`}
+              : `Found ${importStatus.rules} spending limit${importStatus.rules === 1 ? '' : 's'}`}
+            {importStatus.rates > 0 && ` and ${importStatus.rates} currency rate${importStatus.rates === 1 ? '' : 's'}`}
+            {importStatus.rules > 0 && `, read with ${METHOD_LABEL[importStatus.method]}.`}
+            {importStatus.rules > 0 && suggestions.length === 0 && rateSuggestions.length === 0 && ' All handled.'}
           </p>
         )}
         {suggestions.length > 0 && (
@@ -338,6 +393,49 @@ export function PoliciesPanel() {
                 </span>
               </li>
             ))}
+          </ul>
+        )}
+        {rateSuggestions.length > 0 && (
+          <ul className="mt-2 space-y-2">
+            {rateSuggestions.map((r) => {
+              const usable = r.toCurrency === settings.baseCurrency
+              return (
+                <li
+                  key={r.currency}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-white/25 px-3.5 py-2.5 text-sm"
+                >
+                  <span className="flex items-center gap-2 text-white">
+                    <Coins className="h-3.5 w-3.5 flex-none text-white/60" strokeWidth={1.75} />
+                    <span className="font-medium">Rate</span> — 1 {r.currency} = {r.rate} {r.toCurrency}
+                    {!usable && (
+                      <span className="block text-xs text-white/60">
+                        Not in the base currency ({settings.baseCurrency}), so it can't be added.
+                      </span>
+                    )}
+                  </span>
+                  <span className="flex flex-none gap-1.5">
+                    {usable && (
+                      <button
+                        type="button"
+                        onClick={() => addRateSuggestion(r)}
+                        className="inline-flex items-center gap-1 rounded-md border border-white bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-white/90"
+                      >
+                        <Check className="h-3 w-3" strokeWidth={2.25} />
+                        Add
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setRateSuggestions((prev) => prev.filter((c) => c !== r))}
+                      className="inline-flex items-center gap-1 rounded-md border border-white/30 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:border-white hover:bg-white/5"
+                    >
+                      <X className="h-3 w-3" strokeWidth={2.25} />
+                      Dismiss
+                    </button>
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>

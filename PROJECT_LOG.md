@@ -335,6 +335,9 @@ Offline re-verified with the server stopped (no process on the port; a fetch fro
 
 Also: a receipt whose original file is missing from browser storage now says so on its card, not only in the console. Twice during this audit the test browser's file storage was emptied while its database survived. Both times it happened between sessions, and it couldn't be reproduced by reloading, clearing the offline cache, restarting the server or phone emulation. The app has no code path that deletes receipt files. Tests: 180.
 
+### Policy import made OCR-first (2026-11-07)
+The policy-PDF import used only the on-device AI: several minutes per page, numbers not guaranteed, and currency rates never read. It now follows the receipts' design: the PDF's own text layer first (exact, under a second), OCR of the rendered pages for a scanned PDF, and the AI only when neither finds a limit. `parsePolicyText.ts` reads limits ("Meals 75 USD", "Hotel: up to $250") and rates ("1 EUR = 1.10 USD", "EUR to USD: 1.08"); rates are offered with their own Add button. Still nothing is saved without a click. **Found testing:** (1) OCR of a scanned copy read "Meals" as "Meas"; a one-letter slip on a category's own name is now accepted and shown as "written as". (2) Clicking Add twice quickly saved the same limit twice; the row now leaves the list before the save and a second click is ignored. Verified live with the demo policy (text: 0.4 s, scanned: 2 s, all 4 limits and the rate exact). Tests: 187.
+
 ### Known limits, stated plainly
 - Report totals are per currency as printed; there's no single converted grand total, since the rate table exists for limit checks and isn't an exchange-rate source.
 - PDFs longer than 3 pages: only the first 3 are read (shown on the upload card).
