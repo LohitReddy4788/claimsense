@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ShieldCheck, UserRound, KeyRound, ArrowRight, Lock, Loader2, CircleAlert } from 'lucide-react'
 import { checkAdminPin, hasAdminPin, setAdminPin } from '../modules/auth/adminPin'
+import { checkEmployeePassword } from '../modules/auth/employeePassword'
 import { errorText } from './LoadingState'
 import type { Portal, Session } from '../types/dashboard'
 
@@ -19,6 +20,7 @@ const PRIMARY =
 export function PortalLogin({ onSignIn }: PortalLoginProps) {
   const [portal, setPortal] = useState<Portal>('employee')
   const [employeeId, setEmployeeId] = useState('')
+  const [password, setPassword] = useState('')
   const [pin, setPin] = useState('')
   const [pinAgain, setPinAgain] = useState('')
   const [pinExists, setPinExists] = useState<boolean | null>(null)
@@ -36,6 +38,7 @@ export function PortalLogin({ onSignIn }: PortalLoginProps) {
     setError(null)
     setPin('')
     setPinAgain('')
+    setPassword('')
   }
 
   async function submit(e: React.FormEvent) {
@@ -47,7 +50,15 @@ export function PortalLogin({ onSignIn }: PortalLoginProps) {
         setError('Enter your employee ID, e.g. EMP001 (letters and numbers only).')
         return
       }
-      onSignIn({ portal: 'employee', employeeId: id })
+      setBusy(true)
+      try {
+        if (await checkEmployeePassword(id, password)) onSignIn({ portal: 'employee', employeeId: id })
+        else setError('Wrong employee ID or password.')
+      } catch (err) {
+        setError(errorText(err))
+      } finally {
+        setBusy(false)
+      }
       return
     }
     setBusy(true)
@@ -121,6 +132,17 @@ export function PortalLogin({ onSignIn }: PortalLoginProps) {
                 placeholder="EMP001"
                 value={employeeId}
                 onChange={(e) => setEmployeeId(e.target.value)}
+              />
+              <label className="mt-3 block text-xs text-white/50" htmlFor="login-password">
+                Password
+              </label>
+              <input
+                id="login-password"
+                type="password"
+                autoComplete="current-password"
+                className={`mt-1 ${INPUT}`}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </>
           ) : (

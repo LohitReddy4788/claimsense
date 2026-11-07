@@ -177,3 +177,21 @@ describe('Admin PIN (admin portal sign-in)', () => {
     expect((await repo.listAuditLogs()).at(-1)).toMatchObject({ action: 'ADMIN_PIN_SET' })
   })
 })
+
+describe('Employee password (employee portal sign-in)', () => {
+  it('accepts the starting password 1234 once, then only the stored salted hash', async () => {
+    const { checkEmployeePassword } = await import('../../src/modules/auth/employeePassword')
+    expect(await checkEmployeePassword('EMP001', '0000')).toBe(false)
+    expect(await repo.getMeta('employee_password:EMP001')).toBeUndefined()
+
+    expect(await checkEmployeePassword('emp001', '1234')).toBe(true)
+    const stored = await repo.getMeta('employee_password:EMP001')
+    expect(stored).not.toContain('1234')
+    expect((await repo.listAuditLogs()).at(-1)).toMatchObject({ entityId: 'EMP001', action: 'EMPLOYEE_ENROLLED' })
+
+    expect(await checkEmployeePassword('EMP001', '1234')).toBe(true)
+    expect(await checkEmployeePassword('EMP001', '12345')).toBe(false)
+    expect(await checkEmployeePassword('', '1234')).toBe(false)
+    expect((await repo.listAuditLogs()).filter((e) => e.action === 'EMPLOYEE_ENROLLED')).toHaveLength(1)
+  })
+})

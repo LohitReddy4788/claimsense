@@ -45,7 +45,7 @@ sent to human review.
 ```bash
 npm run build    # production build (tsc + vite build)
 npm run preview  # serve the production build locally
-npm test         # 198 automated tests (Vitest), about 10 seconds
+npm test         # 199 automated tests (Vitest), about 10 seconds
 npm run lint     # oxlint
 ```
 
@@ -69,7 +69,7 @@ the in-browser end-to-end runs recorded in `PROJECT_LOG.md`.
 The app opens on a sign-in screen with two portals, both checked on this
 device:
 
-- **Employee portal** (employee ID): *Upload Receipts*, *My Claims* (check
+- **Employee portal** (employee ID and password; every employee starts with `1234`, stored as a salted SHA-256 hash on first sign-in): *Upload Receipts*, *My Claims* (check
   and correct what was read, then submit everything in one click) and *My
   Travel Requests* (request a trip; it stays pending until approved).
 - **Admin portal** (PIN, set on first use and stored only as a salted
