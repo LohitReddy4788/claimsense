@@ -181,3 +181,45 @@ export async function resetAllData(): Promise<void> {
     await tx.query('DELETE FROM app_meta WHERE key <> $1', [MIGRATION_KEY])
   })
 }
+
+/** Adds or replaces one currency rate in a single statement. Found in the
+ * full re-test: saving rates by read-modify-write lost one when two Adds
+ * overlapped (the second wrote back a table read before the first saved).
+ * Merging inside the database can't lose either. Returns the stored row. */
+export async function setPolicyRate(currency: string, rate: number): Promise<PolicySettingsRecord> {
+  const pg = await getPg()
+  const r = await pg.query<{ id: string; base_currency: string; rates: Record<string, number> }>(
+    `INSERT INTO policy_settings (id, base_currency, rates) VALUES ('default', 'USD', $1::jsonb)
+     ON CONFLICT (id) DO UPDATE SET rates = policy_settings.rates || EXCLUDED.rates
+     RETURNING id, base_currency, rates`,
+    [JSON.stringify({ [currency]: rate })],
+  )
+  const row = r.rows[0]
+  return { id: 'default', baseCurrency: row.base_currency, rates: row.rates }
+}
+
+/** Sets the base currency without touching the rate table. */
+export async function setBaseCurrency(baseCurrency: string): Promise<PolicySettingsRecord> {
+  const pg = await getPg()
+  const r = await pg.query<{ base_currency: string; rates: Record<string, number> }>(
+    `INSERT INTO policy_settings (id, base_currency, rates) VALUES ('default', $1, '{}'::jsonb)
+     ON CONFLICT (id) DO UPDATE SET base_currency = EXCLUDED.base_currency
+     RETURNING base_currency, rates`,
+    [baseCurrency],
+  )
+  return { id: 'default', baseCurrency: r.rows[0].base_currency, rates: r.rows[0].rates }
+}
+
+/** Removes a claim the employee hasn't submitted, with its receipt record,
+ * in one transaction. A claim marked as a duplicate of this one stops
+ * pointing at it first (it's no longer a duplicate of anything). Throws if
+ * the claim was submitted or decided meanwhile, so nothing is removed. */
+export async function deleteOpenClaim(claimId: string, receiptId: string): Promise<void> {
+  const pg = await getPg()
+  await pg.transaction(async (tx) => {
+    await tx.query('UPDATE claims SET duplicate_of_claim_id = NULL WHERE duplicate_of_claim_id = $1', [claimId])
+    const removed = await tx.query(`DELETE FROM claims WHERE claim_id = $1 AND status IN ('draft', 'review')`, [claimId])
+    if (removed.affectedRows !== 1) throw new Error('This claim was already submitted or decided, so it can no longer be removed.')
+    await tx.query('DELETE FROM receipts WHERE receipt_id = $1 AND NOT EXISTS (SELECT 1 FROM claims WHERE receipt_id = $1)', [receiptId])
+  })
+}

@@ -115,18 +115,13 @@ export function PoliciesPanel() {
     await refresh()
   }
 
-  // Both settings writes merge into what's stored NOW rather than into this
-  // panel's copy: the copy can be the defaults (first read still in flight)
-  // or stale (changed in another tab), and saving it would silently wipe
-  // the real rate table.
-  async function currentSettings(): Promise<PolicySettingsRecord> {
-    return (await repo.getPolicySettings()) ?? DEFAULT_SETTINGS
-  }
+  // Settings writes merge inside the database (repo.setPolicyRate,
+  // setBaseCurrency) rather than writing back this panel's copy, which can
+  // be the defaults, stale (another tab), or mid-save (two quick Adds).
 
   async function saveBaseCurrency(currency: string) {
-    const updated = { ...(await currentSettings()), baseCurrency: currency.toUpperCase() }
-    await repo.putPolicySettings(updated)
-    setSettings(updated)
+    setSettings((prev) => ({ ...prev, baseCurrency: currency.toUpperCase() }))
+    setSettings(await repo.setBaseCurrency(currency.toUpperCase()))
   }
 
   async function addRate() {
@@ -141,13 +136,7 @@ export function PoliciesPanel() {
       return
     }
     setRateError(null)
-    const stored = await currentSettings()
-    const updated: PolicySettingsRecord = {
-      ...stored,
-      rates: { ...stored.rates, [newCurrency.trim().toUpperCase()]: parsedRate },
-    }
-    await repo.putPolicySettings(updated)
-    setSettings(updated)
+    setSettings(await repo.setPolicyRate(newCurrency.trim().toUpperCase(), parsedRate))
     setNewCurrency('')
     setNewRate('')
   }
@@ -181,10 +170,7 @@ export function PoliciesPanel() {
     saving.current.add(candidate)
     setRateSuggestions((prev) => prev.filter((c) => c !== candidate))
     try {
-      const stored = await currentSettings()
-      const updated: PolicySettingsRecord = { ...stored, rates: { ...stored.rates, [candidate.currency]: candidate.rate } }
-      await repo.putPolicySettings(updated)
-      setSettings(updated)
+      setSettings(await repo.setPolicyRate(candidate.currency, candidate.rate))
     } catch (err) {
       console.error('Saving the imported rate failed:', err)
       setRateSuggestions((prev) => [...prev, candidate])

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plane, CircleAlert, MapPin, CalendarPlus, CheckCircle2, Clock, XCircle, Check, X } from 'lucide-react'
+import { Plane, CircleAlert, MapPin, CalendarPlus, CheckCircle2, Clock, XCircle, Check, X, Loader2 } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { generateId } from '../utils/id'
 import { requestTravel, decideTravelRequest } from '../agents/travel/decideTravelRequest'
@@ -31,6 +31,8 @@ export function TravelRequestsPanel({ portal, employeeId: me = '' }: TravelReque
   const [requests, setRequests] = useState<TravelRequestRecord[]>([])
   const [employeeId, setEmployeeId] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
+  // The trip being approved or rejected (re-matching receipts can take a moment).
+  const [deciding, setDeciding] = useState<string | null>(null)
   const [destination, setDestination] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -58,6 +60,9 @@ export function TravelRequestsPanel({ portal, employeeId: me = '' }: TravelReque
   }, [])
 
   async function decide(r: TravelRequestRecord, decision: 'approved' | 'rejected') {
+    if (deciding) return
+    setDeciding(r.requestId)
+    setNotice(null)
     try {
       const result = await decideTravelRequest(r.requestId, decision)
       setNotice(
@@ -69,6 +74,7 @@ export function TravelRequestsPanel({ portal, employeeId: me = '' }: TravelReque
       setNotice(`Could not update the trip: ${errorText(err)}`)
     }
     await refresh()
+    setDeciding(null)
   }
 
   async function addRequest() {
@@ -247,11 +253,18 @@ export function TravelRequestsPanel({ portal, employeeId: me = '' }: TravelReque
                       <StatusIcon className="h-3 w-3" strokeWidth={1.75} />
                       {r.approvalStatus}
                     </span>
+                    {deciding === r.requestId && (
+                      <span className="inline-flex items-center gap-1 text-xs text-white/60">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+                        Updating and re-matching receipts…
+                      </span>
+                    )}
                     {isAdmin && r.approvalStatus !== 'approved' && (
                       <button
                         type="button"
                         onClick={() => decide(r, 'approved')}
-                        className="inline-flex items-center gap-1 rounded-md border border-white bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-white/90"
+                        disabled={deciding !== null}
+                        className="inline-flex items-center gap-1 rounded-md border border-white bg-white px-2.5 py-1 text-xs font-medium text-black transition-colors hover:bg-white/90 disabled:opacity-40"
                       >
                         <Check className="h-3 w-3" strokeWidth={2.25} />
                         Approve
@@ -261,7 +274,8 @@ export function TravelRequestsPanel({ portal, employeeId: me = '' }: TravelReque
                       <button
                         type="button"
                         onClick={() => decide(r, 'rejected')}
-                        className="inline-flex items-center gap-1 rounded-md border border-red-400/60 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-400/10"
+                        disabled={deciding !== null}
+                        className="inline-flex items-center gap-1 rounded-md border border-red-400/60 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-400/10 disabled:opacity-40"
                       >
                         <X className="h-3 w-3" strokeWidth={2.25} />
                         Reject

@@ -2,6 +2,7 @@ import * as repo from '../../modules/storage/repository'
 import { appendAuditEntry } from '../../modules/audit/auditLog'
 import { evaluateClaimPolicy } from '../../modules/policy/policyEngine'
 import { reconcileTravel } from '../travel/reconcileTravel'
+import { deleteReceiptFile } from '../../modules/storage/opfs'
 import type { ExpenseCategory } from '../../types/category'
 import type { ClaimRecord } from '../../types/records'
 
@@ -158,4 +159,32 @@ export async function reopenClaim(claimId: string): Promise<ApproveResult> {
   if (!updated) return { success: false, reason: 'Claim was updated but could not be re-read afterward.' }
   await appendAuditEntry(claimId, 'CLAIM_REOPENED', 'rejection undone; back to the employee for review')
   return { success: true, claim: updated }
+}
+
+/** The employee removes a receipt they don't want to claim (a duplicate, a
+ * personal expense) before submitting. Its claim, receipt record and stored
+ * file are deleted; the audit trail keeps a record that it existed and was
+ * withdrawn. Not possible once submitted: then only the admin decides. */
+export async function withdrawClaim(claimId: string): Promise<{ success: true } | { success: false; reason: string }> {
+  const claim = await repo.getClaim(claimId)
+  if (!claim) return { success: false, reason: `No claim found with id ${claimId}.` }
+  if (claim.status !== 'draft' && claim.status !== 'review') {
+    return { success: false, reason: 'This claim was already submitted, so only the admin can decide on it now.' }
+  }
+  try {
+    await repo.deleteOpenClaim(claimId, claim.receiptId)
+  } catch (err) {
+    return { success: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+  try {
+    await deleteReceiptFile(claim.receiptId)
+  } catch {
+    // The file may already be gone; the records are what matter.
+  }
+  await appendAuditEntry(
+    claimId,
+    'CLAIM_WITHDRAWN',
+    `removed by ${claim.employeeId ?? 'the employee'} before submitting: ${claim.vendor ?? '-'}, ${claim.amount ?? '-'} ${claim.currency ?? ''}`.trim(),
+  )
+  return { success: true }
 }

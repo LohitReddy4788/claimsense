@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Download, Loader2, Save, ShieldCheck, XCircle, RotateCcw, ShieldX, ShieldAlert, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
+import { Download, Loader2, Save, ShieldCheck, XCircle, RotateCcw, Trash2, ShieldX, ShieldAlert, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
-import { editClaim, approveClaim, rejectClaim, reopenClaim } from '../agents/review/reviewClaim'
+import { editClaim, approveClaim, rejectClaim, reopenClaim, withdrawClaim } from '../agents/review/reviewClaim'
 import { exportClaims, type ExportScope } from '../agents/export/exportClaims'
 import { submitReport, readyForReport, totalsByCurrency } from '../agents/review/submitReport'
 import { EXPENSE_CATEGORIES } from '../types/category'
@@ -93,6 +93,8 @@ export function ClaimsPanel({ active, portal, employeeId = '' }: ClaimsPanelProp
   const [reportMessage, setReportMessage] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState<string | null>(null)
   const [tripsById, setTripsById] = useState<Record<string, TravelRequestRecord>>({})
+  // The claim the employee clicked Remove on, waiting for "Yes, remove".
+  const [removing, setRemoving] = useState<string | null>(null)
   // Claims whose Reject is open, with the reason being typed.
   const [rejecting, setRejecting] = useState<Record<string, string>>({})
 
@@ -214,6 +216,13 @@ export function ClaimsPanel({ active, portal, employeeId = '' }: ClaimsPanelProp
     } catch (err) {
       setMessage((m) => ({ ...m, [claimId]: `Could not reject: ${errorText(err)}` }))
     }
+  }
+
+  async function handleWithdraw(claimId: string) {
+    const result = await withdrawClaim(claimId)
+    setRemoving(null)
+    if (!result.success) setMessage((m) => ({ ...m, [claimId]: `Could not remove: ${result.reason}` }))
+    await refresh()
   }
 
   async function handleReopen(claimId: string) {
@@ -599,6 +608,32 @@ export function ClaimsPanel({ active, portal, employeeId = '' }: ClaimsPanelProp
                       <Save className="h-3.5 w-3.5" strokeWidth={1.75} />
                       Save changes
                     </button>
+                    {removing === c.claimId ? (
+                      <span className="inline-flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-white/70">Remove this receipt from your claims?</span>
+                        <button
+                          type="button"
+                          onClick={() => handleWithdraw(c.claimId)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-400 bg-red-500/80 px-3 py-1.5 font-medium text-white transition-colors hover:bg-red-500"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          Yes, remove
+                        </button>
+                        <button type="button" onClick={() => setRemoving(null)} className="text-white/50 hover:text-white">
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setRemoving(c.claimId)}
+                        title="For a duplicate or a personal expense: removes it before you submit"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/60 px-3 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-400/10"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        Remove
+                      </button>
+                    )}
                     {message[c.claimId] && <span className="text-xs text-white/50">{message[c.claimId]}</span>}
                   </div>
                 )}

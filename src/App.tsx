@@ -46,7 +46,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const panelBodies: Partial<Record<DashboardSection, React.ReactNode>> =
     session.portal === 'employee'
       ? {
-          upload: <UploadReceiptsPanel employeeId={session.employeeId} />,
+          upload: <UploadReceiptsPanel employeeId={session.employeeId} active={active === 'upload'} />,
           claims: <ClaimsPanel active={active === 'claims'} portal="employee" employeeId={employeeId} />,
           travel: <TravelRequestsPanel portal="employee" employeeId={employeeId} />,
         }

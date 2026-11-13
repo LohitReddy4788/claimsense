@@ -45,7 +45,7 @@ sent to human review.
 ```bash
 npm run build    # production build (tsc + vite build)
 npm run preview  # serve the production build locally
-npm test         # 199 automated tests (Vitest), about 10 seconds
+npm test         # 203 automated tests (Vitest), about 10 seconds
 npm run lint     # oxlint
 ```
 

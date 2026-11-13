@@ -48,9 +48,12 @@ interface ExtractState {
 interface UploadReceiptsPanelProps {
   /** The signed-in employee: every receipt uploaded here is theirs. */
   employeeId: string
+  /** Re-reads the list whenever this page is shown, so a receipt removed in
+   * My Claims doesn't linger here. */
+  active: boolean
 }
 
-export function UploadReceiptsPanel({ employeeId }: UploadReceiptsPanelProps) {
+export function UploadReceiptsPanel({ employeeId, active }: UploadReceiptsPanelProps) {
   const [receipts, setReceipts] = useState<ReceiptRecord[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -137,7 +140,11 @@ export function UploadReceiptsPanel({ employeeId }: UploadReceiptsPanelProps) {
   }
 
   useEffect(() => {
-    refresh()
+    if (active) refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active])
+
+  useEffect(() => {
     return () => {
       Object.values(previews).forEach((p) => {
         if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)

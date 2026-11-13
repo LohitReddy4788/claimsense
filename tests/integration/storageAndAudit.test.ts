@@ -224,3 +224,18 @@ describe('Reset all data (admin)', () => {
     expect(await verifyAuditChain()).toMatchObject({ valid: true, totalEntries: 1 })
   })
 })
+
+describe('Currency rates', () => {
+  it('keeps every rate when several are added at the same moment', async () => {
+    await repo.setBaseCurrency('USD')
+    await Promise.all([
+      repo.setPolicyRate('EUR', 1.1),
+      repo.setPolicyRate('GBP', 1.27),
+      repo.setPolicyRate('INR', 0.012),
+      repo.setPolicyRate('JPY', 0.0067),
+    ])
+    expect(await repo.getPolicySettings()).toEqual({ id: 'default', baseCurrency: 'USD', rates: { EUR: 1.1, GBP: 1.27, INR: 0.012, JPY: 0.0067 } })
+    await repo.setBaseCurrency('EUR')
+    expect((await repo.getPolicySettings())?.rates).toHaveProperty('GBP', 1.27)
+  })
+})

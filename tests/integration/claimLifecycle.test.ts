@@ -15,7 +15,7 @@ const { resetDb } = await import('../helpers/testDb')
 const repo = await import('../../src/modules/storage/repository')
 const { ingestReceipt } = await import('../../src/agents/ingestion/ingestReceipt')
 const { populateClaim } = await import('../../src/agents/sheet/populateClaim')
-const { editClaim, approveClaim, rejectClaim, reopenClaim } = await import('../../src/agents/review/reviewClaim')
+const { editClaim, approveClaim, rejectClaim, reopenClaim, withdrawClaim } = await import('../../src/agents/review/reviewClaim')
 const { buildApprovedClaimsWorkbook, buildClaimsWorkbook } = await import('../../src/agents/export/exportClaims')
 const { submitReport } = await import('../../src/agents/review/submitReport')
 const { requestTravel, decideTravelRequest } = await import('../../src/agents/travel/decideTravelRequest')
@@ -181,6 +181,33 @@ describe('Review & Submit Agent', () => {
     await approveClaim(claim.claimId)
     await expect(editClaim(claim.claimId, { amount: 1 })).rejects.toThrow(/already approved/)
     expect((await repo.getClaim(claim.claimId))?.amount).toBe(40)
+  })
+})
+
+describe('Removing a claim before submitting', () => {
+  it('deletes the claim and its receipt, clears the duplicate link, and logs it', async () => {
+    const original = await ingestAndBuild(png('a.png', '1'))
+    const copy = await ingestAndBuild(png('a-copy.png', '1'))
+    expect(copy.duplicateOfClaimId).toBe(original.claimId)
+
+    expect(await withdrawClaim(copy.claimId)).toEqual({ success: true })
+    expect(await repo.getClaim(copy.claimId)).toBeUndefined()
+    expect((await repo.listReceipts()).map((r) => r.receiptId)).toEqual([original.receiptId])
+    expect((await repo.listAuditLogs()).at(-1)).toMatchObject({ entityId: copy.claimId, action: 'CLAIM_WITHDRAWN' })
+
+    // Removing the original a duplicate pointed at is allowed too.
+    const again = await ingestAndBuild(png('a-again.png', '1'))
+    expect(again.duplicateOfClaimId).toBe(original.claimId)
+    expect(await withdrawClaim(original.claimId)).toEqual({ success: true })
+    expect((await repo.getClaim(again.claimId))?.duplicateOfClaimId ?? null).toBeNull()
+    expect((await verifyAuditChain()).valid).toBe(true)
+  })
+
+  it('refuses once the claim is submitted', async () => {
+    const c = await ingestAndBuild(png('a.png'))
+    await submitReport('EMP001')
+    expect(await withdrawClaim(c.claimId)).toMatchObject({ success: false, reason: expect.stringMatching(/submitted/) })
+    expect(await repo.getClaim(c.claimId)).toBeDefined()
   })
 })
 
