@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useLiveRefresh } from '../hooks/useLiveRefresh'
 import { Plane, CircleAlert, MapPin, CalendarPlus, CheckCircle2, Clock, XCircle, Check, X, Loader2 } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { generateId } from '../utils/id'
@@ -24,9 +25,12 @@ interface TravelRequestsPanelProps {
   portal: 'employee' | 'admin'
   /** The signed-in employee (employee portal only). */
   employeeId?: string
+  /** Whether this page is the one on screen; while it is, the list keeps
+   * itself current (new requests from the employee, decisions by the admin). */
+  active: boolean
 }
 
-export function TravelRequestsPanel({ portal, employeeId: me = '' }: TravelRequestsPanelProps) {
+export function TravelRequestsPanel({ portal, employeeId: me = '', active }: TravelRequestsPanelProps) {
   const isAdmin = portal === 'admin'
   const [requests, setRequests] = useState<TravelRequestRecord[]>([])
   const [employeeId, setEmployeeId] = useState('')
@@ -55,9 +59,7 @@ export function TravelRequestsPanel({ portal, employeeId: me = '' }: TravelReque
     }
   }
 
-  useEffect(() => {
-    refresh()
-  }, [])
+  useLiveRefresh(active, refresh)
 
   async function decide(r: TravelRequestRecord, decision: 'approved' | 'rejected') {
     if (deciding) return

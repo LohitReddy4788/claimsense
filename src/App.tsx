@@ -48,11 +48,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       ? {
           upload: <UploadReceiptsPanel employeeId={session.employeeId} active={active === 'upload'} />,
           claims: <ClaimsPanel active={active === 'claims'} portal="employee" employeeId={employeeId} />,
-          travel: <TravelRequestsPanel portal="employee" employeeId={employeeId} />,
+          travel: <TravelRequestsPanel portal="employee" employeeId={employeeId} active={active === 'travel'} />,
         }
       : {
           claims: <ClaimsPanel active={active === 'claims'} portal="admin" />,
-          travel: <TravelRequestsPanel portal="admin" />,
+          travel: <TravelRequestsPanel portal="admin" active={active === 'travel'} />,
           policies: <PoliciesPanel />,
           audit: <AuditLogsPanel active={active === 'audit'} />,
           database: (

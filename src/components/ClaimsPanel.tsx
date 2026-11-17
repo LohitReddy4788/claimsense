@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useLiveRefresh } from '../hooks/useLiveRefresh'
 import { Download, Loader2, Save, ShieldCheck, XCircle, RotateCcw, Trash2, ShieldX, ShieldAlert, CircleAlert, CheckCircle2, Clock, FileEdit, Receipt, Plane, User, Send, FolderCheck } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { editClaim, approveClaim, rejectClaim, reopenClaim, withdrawClaim } from '../agents/review/reviewClaim'
@@ -137,10 +138,7 @@ export function ClaimsPanel({ active, portal, employeeId = '' }: ClaimsPanelProp
     }
   }
 
-  useEffect(() => {
-    if (active) refresh()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+  useLiveRefresh(active, refresh)
 
   /** Returns whether the edit was saved, so Approve can refuse to go
    * ahead on a failed save instead of approving the old values. */
@@ -162,6 +160,7 @@ export function ClaimsPanel({ active, portal, employeeId = '' }: ClaimsPanelProp
     // corruption) — without this, that failure was an unhandled rejection
     // with nothing shown on screen, the same silent-failure class refresh()
     // above is already guarded against.
+    setMessage((m) => ({ ...m, [claimId]: 'Saving…' }))
     try {
       await editClaim(claimId, {
         vendor: buf.vendor.trim() === '' ? null : buf.vendor.trim(),
@@ -170,8 +169,9 @@ export function ClaimsPanel({ active, portal, employeeId = '' }: ClaimsPanelProp
         date: buf.date.trim() === '' ? null : normalizeReceiptDate(buf.date),
         category: buf.category,
       })
-      setMessage((m) => ({ ...m, [claimId]: 'Saved.' }))
+      // Only once the card shows the re-checked policy and trip result.
       await refresh()
+      setMessage((m) => ({ ...m, [claimId]: 'Saved.' }))
       return true
     } catch (err) {
       setMessage((m) => ({

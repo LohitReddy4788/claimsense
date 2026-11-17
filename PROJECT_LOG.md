@@ -350,3 +350,21 @@ Every feature run live on an empty database: PIN rules (first-time set, mismatch
 - An ambiguous date like 03/04/2026 is kept as printed; both readings are used for trip matching and the future-date check.
 - The CSP header covers workers only when served by `vite preview` (or a host configured the same way); the `<meta>` tag covers the page everywhere.
 - Claims created before 2026-11-05 have no employee, match status or line items recorded, so they can't go into a report.
+
+## Session 2026-11-17 — pre-presentation re-test
+
+- **Travel approvals not reaching the admin (fixed).** The admin's Travel Approvals list was read once, at sign-in. A trip an employee requested afterwards in another tab or window never appeared, so the admin couldn't approve it. Travel, Claims and Audit pages now refresh when opened, when the window regains focus, and every 4 s while shown (`src/hooks/useLiveRefresh.ts`). Employees also see decisions without reloading.
+- **Every action was slow (fixed).** PGlite waited for a full IndexedDB flush after every query (~400 ms each), so saving one claim edit took 5–9 s. With `relaxedDurability` (`src/workers/pgWorker.ts`), a query takes ~36 ms and an edit ~0.7 s; the flush still runs after every query in the background. Writes survived reloads and the audit chain stayed valid.
+- **Reset could come back after the reload (fixed).** With the background flush, reloading straight after Reset cut off the write (reproduced: the data came back). Reset now waits 2 s before reloading. A second reload confirmed the reset stayed.
+- **"Saved." showed before the card updated.** The message now appears only after the re-checked policy and trip result are on screen, with "Saving…" shown meanwhile.
+- **Full live run (two tabs: admin and employee at once).** All of these passed:
+  - Reset; PIN mismatch; wrong employee password.
+  - Policy PDF import (4 limits, 3 rates, rapid Adds); limit and rate validation.
+  - Trip request with a bad date range, then live approval.
+  - Batch upload (fake file rejected); Extract all, 6 receipts in 17 s; all claims matched the expected table.
+  - Duplicate removed; submitted 6 claims, 623.93 USD + 70.00 EUR; submitted claims locked; EMP002 isolated.
+  - Admin approved 3 and rejected 3 with reasons; the employee saw the decisions live.
+  - Send back, edit, resubmit, approve.
+  - Three Excel exports; audit chain intact (35 entries); SQL DELETE blocked.
+  - Admin added a trip directly; only localhost requests (CSP blocks others).
+  - 203 automated tests pass.

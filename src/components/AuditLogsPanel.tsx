@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useLiveRefresh } from '../hooks/useLiveRefresh'
 import { ShieldCheck, ShieldAlert, Loader2, History, Link2, Hash } from 'lucide-react'
 import * as repo from '../modules/storage/repository'
 import { verifyAuditChain, type ChainVerification } from '../modules/audit/auditLog'
@@ -29,10 +30,7 @@ export function AuditLogsPanel({ active }: AuditLogsPanelProps) {
     }
   }
 
-  useEffect(() => {
-    if (active) refresh()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+  useLiveRefresh(active, refresh)
 
   async function handleVerify() {
     setVerifying(true)

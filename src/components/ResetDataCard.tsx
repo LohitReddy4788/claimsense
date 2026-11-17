@@ -22,7 +22,11 @@ export function ResetDataCard() {
       } catch {
         // ignore
       }
-      // Reload so no screen keeps showing what was just deleted.
+      // The database writes to disk in the background (pgWorker.ts); give
+      // that a moment to finish so the reload can't cut it off and bring
+      // the deleted data back. Then reload so no screen keeps showing what
+      // was just deleted.
+      await new Promise((resolve) => setTimeout(resolve, 2000))
       location.reload()
     } catch (err) {
       setError(`Could not reset: ${errorText(err)}`)
