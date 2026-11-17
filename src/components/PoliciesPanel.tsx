@@ -16,6 +16,7 @@ import type { PolicyRecord, PolicySettingsRecord } from '../types/records'
 import { extractPolicyFromPdf, MAX_POLICY_PDF_PAGES, type PolicyReadMethod } from '../agents/policy-import/extractPolicyFromPdf'
 import { EXPENSE_CATEGORIES } from '../types/category'
 import { LoadingState, errorText } from './LoadingState'
+import { recheckOpenClaimsPolicy } from '../agents/review/recheckOpenClaimsPolicy'
 import type { PolicyRateCandidate, PolicyRuleCandidate } from '../types/extraction'
 
 const METHOD_LABEL: Record<PolicyReadMethod, string> = {
@@ -68,6 +69,20 @@ export function PoliciesPanel() {
 
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  // What the last re-check of employees' unsubmitted claims changed.
+  const [recheckNote, setRecheckNote] = useState<string | null>(null)
+
+  /** After any limit or rate change: claims already read but not yet
+   * submitted are checked again against the new rules. */
+  async function recheckClaims() {
+    try {
+      const changed = await recheckOpenClaimsPolicy()
+      if (changed > 0) setRecheckNote(`${changed} unsubmitted claim(s) re-checked against the updated policy.`)
+    } catch (err) {
+      console.error('Re-checking open claims failed:', err)
+      setRecheckNote(`Could not re-check open claims: ${errorText(err)}`)
+    }
+  }
 
   async function refresh() {
     try {
@@ -113,6 +128,7 @@ export function PoliciesPanel() {
     // several limits in a row without re-picking the category each time.
     setLimitAmount('')
     await refresh()
+    await recheckClaims()
   }
 
   // Settings writes merge inside the database (repo.setPolicyRate,
@@ -122,6 +138,7 @@ export function PoliciesPanel() {
   async function saveBaseCurrency(currency: string) {
     setSettings((prev) => ({ ...prev, baseCurrency: currency.toUpperCase() }))
     setSettings(await repo.setBaseCurrency(currency.toUpperCase()))
+    await recheckClaims()
   }
 
   async function addRate() {
@@ -139,6 +156,7 @@ export function PoliciesPanel() {
     setSettings(await repo.setPolicyRate(newCurrency.trim().toUpperCase(), parsedRate))
     setNewCurrency('')
     setNewRate('')
+    await recheckClaims()
   }
 
   async function handlePolicyPdf(file: File) {
@@ -171,6 +189,7 @@ export function PoliciesPanel() {
     setRateSuggestions((prev) => prev.filter((c) => c !== candidate))
     try {
       setSettings(await repo.setPolicyRate(candidate.currency, candidate.rate))
+      void recheckClaims()
     } catch (err) {
       console.error('Saving the imported rate failed:', err)
       setRateSuggestions((prev) => [...prev, candidate])
@@ -205,6 +224,7 @@ export function PoliciesPanel() {
       saving.current.delete(candidate)
     }
     await refresh()
+    await recheckClaims()
   }
 
   function dismissSuggestion(candidate: PolicyRuleCandidate) {
@@ -213,6 +233,12 @@ export function PoliciesPanel() {
 
   return (
     <div className="space-y-6">
+      {recheckNote && (
+        <p className="flex items-center gap-1.5 rounded-xl border border-white/15 px-4 py-2.5 text-xs text-white/70">
+          <ListChecks className="h-3.5 w-3.5 flex-none" strokeWidth={1.75} />
+          {recheckNote}
+        </p>
+      )}
       <section className="rounded-2xl border border-white/15 p-5">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-white/40">

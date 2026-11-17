@@ -368,3 +368,11 @@ Every feature run live on an empty database: PIN rules (first-time set, mismatch
   - Three Excel exports; audit chain intact (35 entries); SQL DELETE blocked.
   - Admin added a trip directly; only localhost requests (CSP blocks others).
   - 203 automated tests pass.
+- **Second round (edge cases, fresh data).**
+  - **Policies added after the receipts were read (fixed).** Those claims kept showing "No policy defined" or "Currency unsupported". Any limit or rate change now re-checks every claim that hasn't been submitted (`src/agents/review/recheckOpenClaimsPolicy.ts`). Overlapping calls fold into one pass, submitted claims are left alone, and 2 new tests cover this (205 total).
+  - **Wrong wording on trip rejection (fixed).** Rejecting an approved trip unlinked its receipts correctly, but the message said they were "re-matched to it".
+  - **Also passed:**
+    - Wrong admin PIN; a claim with no policy and an unknown currency goes to review.
+    - Trip approved after the receipts were read (they re-match); trip rejected, then approved again.
+    - All 8 pages at phone width (375 px) with no sideways scroll.
+    - Offline with the server stopped.

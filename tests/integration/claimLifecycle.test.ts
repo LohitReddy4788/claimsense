@@ -21,6 +21,7 @@ const { submitReport } = await import('../../src/agents/review/submitReport')
 const { requestTravel, decideTravelRequest } = await import('../../src/agents/travel/decideTravelRequest')
 const { verifyAuditChain } = await import('../../src/modules/audit/auditLog')
 const { evaluatePolicy } = await import('../../src/modules/policy/policyEngine')
+const { recheckOpenClaimsPolicy } = await import('../../src/agents/review/recheckOpenClaimsPolicy')
 import type { ExtractedReceiptData } from '../../src/types/extraction'
 
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
@@ -461,3 +462,55 @@ describe('Travel requests: employee asks, admin decides', () => {
     expect((await repo.getClaim(sent.claimId))?.travelRequestId).toBe(r.request.requestId)
   })
 })
+
+describe('Policy changes re-check unsubmitted claims (found in pre-presentation testing)', () => {
+  it('applies a limit added after the receipt was read, and leaves submitted claims alone', async () => {
+    const lodging: ExtractedReceiptData = { vendor: 'Harbor Hotel', amount: 310, currency: 'USD', date: '2026-03-13', lineItems: [] }
+    const open = await buildWithCategory(png('a.png', 'a'), lodging)
+    const sent = await buildWithCategory(png('b.png', 'b'), { ...lodging, vendor: 'Other Hotel', date: '2026-03-01' })
+    await submit(sent.claimId)
+    expect((await repo.getClaim(open.claimId))?.policyReasonCode).toBe('NO_POLICY_DEFINED')
+
+    await repo.addPolicy({ policyId: 'p2', category: 'Lodging', limitAmount: 250 })
+    expect(await recheckOpenClaimsPolicy()).toBe(1)
+
+    const after = await repo.getClaim(open.claimId)
+    expect(after?.policyResult).toBe('VIOLATION')
+    expect(after?.policyReasonCode).toBe('LODGING_LIMIT_EXCEEDED')
+    expect((await repo.getClaim(sent.claimId))?.policyReasonCode).toBe('NO_POLICY_DEFINED')
+    expect((await repo.listAuditLogs()).some((l) => l.action === 'POLICY_REEVALUATED' && l.entityId === open.claimId)).toBe(true)
+    // Nothing changed since: a second pass writes nothing.
+    expect(await recheckOpenClaimsPolicy()).toBe(0)
+  })
+
+  it('converts a currency once its rate is added, and folds overlapping calls into one', async () => {
+    const yen: ExtractedReceiptData = { vendor: 'Tokyo Ramen', amount: 9000, currency: 'JPY', date: '2026-03-12', lineItems: [] }
+    const c = await buildWithCategory(png('c.png', 'c'), yen, 'Meals')
+    expect((await repo.getClaim(c.claimId))?.policyReasonCode).toBe('CURRENCY_UNSUPPORTED')
+    await repo.setPolicyRate('JPY', 0.0067)
+    const [a, b] = await Promise.all([recheckOpenClaimsPolicy(), recheckOpenClaimsPolicy()])
+    expect(a).toBe(b)
+    const after = await repo.getClaim(c.claimId)
+    expect(after?.policyResult).toBe('PASS')
+    // A review flag is never cleared by a re-check.
+    expect(after?.status).toBe('review')
+    expect((await repo.listAuditLogs()).filter((l) => l.action === 'POLICY_REEVALUATED').length).toBe(1)
+    expect((await verifyAuditChain()).valid).toBe(true)
+  })
+})
+
+async function buildWithCategory(file: File, data: ExtractedReceiptData, category: 'Lodging' | 'Meals' = 'Lodging') {
+  const ingested = await ingestReceipt(file)
+  if (!ingested.success) throw new Error(ingested.reason)
+  const policy = evaluatePolicy(data, category, await repo.listPolicies(), await repo.getPolicySettings() ?? SETTINGS)
+  return populateClaim({
+    receiptId: ingested.receipt.receiptId,
+    employeeId: 'EMP001',
+    fileHash: ingested.receipt.fileHash,
+    data,
+    extractionStatus: 'valid',
+    category,
+    reconciliation: unmatched,
+    policy,
+  })
+}

@@ -69,7 +69,13 @@ export function TravelRequestsPanel({ portal, employeeId: me = '', active }: Tra
       const result = await decideTravelRequest(r.requestId, decision)
       setNotice(
         result.success
-          ? `${r.employeeId}'s trip to ${r.destination} ${decision}.${result.rematched ? ` ${result.rematched} of their receipt(s) re-matched to it.` : ''}`
+          ? `${r.employeeId}'s trip to ${r.destination} ${decision}.${
+              result.rematched
+                ? decision === 'approved'
+                  ? ` ${result.rematched} of their receipt(s) now linked to it.`
+                  : ` ${result.rematched} of their receipt(s) no longer linked to it.`
+                : ''
+            }`
           : result.reason,
       )
     } catch (err) {
